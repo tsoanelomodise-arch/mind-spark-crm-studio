@@ -1,0 +1,8 @@
+{
+  "name": "Integrated: Mind Spark Studio/CRM",
+  "description": "A canvas for thinking, connecting ideas, structuring mind maps, and interactive process flow specs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
