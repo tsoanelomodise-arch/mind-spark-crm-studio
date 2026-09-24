@@ -1,17 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
-import { generateProjectQuote, type ProjectQuoteResult, type QuoteBreakdownItem, type ServiceSummaryBreakdown } from "@/lib/quote.functions";
 import {
-  ServiceRateItem,
-  getStoredRateCard,
-  calculateBlendedRate,
-} from "@/lib/rate-card";
-import {
-  getSavedQuoteRecord,
-  saveQuoteRecord,
-  clearQuoteRecord,
-} from "@/lib/quote-storage";
+  generateProjectQuote,
+  extractPdfScopeText,
+  type ProjectQuoteResult,
+  type QuoteBreakdownItem,
+  type ServiceSummaryBreakdown,
+} from "@/lib/quote.functions";
+import { ServiceRateItem, getStoredRateCard, calculateBlendedRate } from "@/lib/rate-card";
+import { getSavedQuoteRecord, saveQuoteRecord, clearQuoteRecord } from "@/lib/quote-storage";
 import { RateCardManagerDialog } from "@/components/RateCardManagerDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { formatZAR } from "@/lib/pipeline";
@@ -63,6 +61,10 @@ import {
   Notebook,
   StickyNote,
   MessageSquare,
+  FileUp,
+  FileCheck,
+  X,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -89,6 +91,7 @@ export function ProjectQuoteDialog({
   onQuoteApplied,
 }: ProjectQuoteDialogProps) {
   const quoteFn = useServerFn(generateProjectQuote);
+  const extractPdfFn = useServerFn(extractPdfScopeText);
 
   const [scopeText, setScopeText] = useState("");
   const [hourlyRate, setHourlyRate] = useState<number>(750);
@@ -96,6 +99,14 @@ export function ProjectQuoteDialog({
   const [useRateCard, setUseRateCard] = useState<boolean>(true);
   const [rateCardItems, setRateCardItems] = useState<ServiceRateItem[]>([]);
   const [rateCardManagerOpen, setRateCardManagerOpen] = useState<boolean>(false);
+
+  // PDF Upload state
+  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
+  const [pdfFileName, setPdfFileName] = useState<string | null>(null);
+  const [pdfFileSize, setPdfFileSize] = useState<string | null>(null);
+  const [extractingPdf, setExtractingPdf] = useState(false);
+  const [isDraggingPdf, setIsDraggingPdf] = useState(false);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ProjectQuoteResult | null>(null);
@@ -108,6 +119,69 @@ export function ProjectQuoteDialog({
   // New assumption & risk draft inputs
   const [newAssumption, setNewAssumption] = useState("");
   const [newRisk, setNewRisk] = useState("");
+
+  const handlePdfFileSelect = (file: File) => {
+    if (!file) return;
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Please select a valid PDF file.");
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error("PDF file size is too large (max 15MB).");
+      return;
+    }
+
+    const sizeFormatted =
+      file.size >= 1024 * 1024
+        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.round(file.size / 1024)} KB`;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const resultStr = e.target?.result as string;
+      if (resultStr) {
+        setPdfBase64(resultStr);
+        setPdfFileName(file.name);
+        setPdfFileSize(sizeFormatted);
+        toast.success(`Attached PDF: ${file.name}`);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleExtractPdfText = async () => {
+    if (!pdfBase64) return;
+    setExtractingPdf(true);
+    try {
+      const res = await extractPdfFn({
+        data: {
+          pdfBase64,
+          pdfFileName: pdfFileName || undefined,
+        },
+      });
+      if (res.scopeText) {
+        setScopeText((prev) =>
+          prev.trim()
+            ? `${prev.trim()}\n\n--- Extracted PDF Scope (${pdfFileName}) ---\n${res.scopeText}`
+            : res.scopeText,
+        );
+        toast.success("Extracted PDF scope requirements into text field!");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to extract text from PDF");
+    } finally {
+      setExtractingPdf(false);
+    }
+  };
+
+  const handleRemovePdf = () => {
+    setPdfBase64(null);
+    setPdfFileName(null);
+    setPdfFileSize(null);
+    if (pdfInputRef.current) pdfInputRef.current.value = "";
+    toast.info("Removed PDF document attachment.");
+  };
 
   useEffect(() => {
     if (open) {
@@ -264,7 +338,10 @@ export function ProjectQuoteDialog({
     }
   };
 
-  const updateResultTotals = (items: QuoteBreakdownItem[], currentRes: ProjectQuoteResult): ProjectQuoteResult => {
+  const updateResultTotals = (
+    items: QuoteBreakdownItem[],
+    currentRes: ProjectQuoteResult,
+  ): ProjectQuoteResult => {
     let computedCost = 0;
     const serviceSummaryMap = new Map<string, { hours: number; rate: number; totalCost: number }>();
 
@@ -302,7 +379,7 @@ export function ProjectQuoteDialog({
         hours: val.hours,
         rate: val.rate,
         totalCost: val.totalCost,
-      })
+      }),
     );
 
     return {
@@ -320,8 +397,8 @@ export function ProjectQuoteDialog({
   };
 
   const handleGenerate = async () => {
-    if (!scopeText.trim()) {
-      toast.error("Please enter a project description or requirements.");
+    if (!scopeText.trim() && !pdfBase64) {
+      toast.error("Please enter a scope description or upload a PDF RFP document.");
       return;
     }
 
@@ -331,7 +408,9 @@ export function ProjectQuoteDialog({
         data: {
           projectName,
           projectType: projectType || undefined,
-          scopeText: scopeText.trim(),
+          scopeText: scopeText.trim() || undefined,
+          pdfBase64: pdfBase64 || undefined,
+          pdfFileName: pdfFileName || undefined,
           hourlyRate: Number(hourlyRate) || 750,
           currency,
           serviceRates: useRateCard && rateCardItems.length > 0 ? rateCardItems : undefined,
@@ -343,10 +422,23 @@ export function ProjectQuoteDialog({
       setIsAmending(false);
 
       // Auto-save generated quote to storage
-      const rec = saveQuoteRecord(projectId, scopeText.trim(), res, res, false);
+      const storageScopeText =
+        scopeText.trim() || `Quote generated from PDF: ${pdfFileName || "RFP Document"}`;
+      const rec = saveQuoteRecord(
+        projectId,
+        storageScopeText,
+        res,
+        res,
+        false,
+        pdfFileName || undefined,
+      );
       if (rec) setSavedAt(rec.savedAt);
 
-      toast.success("Quote generated and saved!");
+      toast.success(
+        pdfBase64
+          ? `Generated quote from PDF (${pdfFileName || "RFP Document"}) and scope!`
+          : "Quote generated and saved!",
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to generate quote");
     } finally {
@@ -383,7 +475,7 @@ export function ProjectQuoteDialog({
     // If service role changed and matches rate card, update serviceRate automatically
     if (field === "serviceName") {
       const matchedCard = rateCardItems.find(
-        (rc) => rc.name.toLowerCase().trim() === String(value).toLowerCase().trim()
+        (rc) => rc.name.toLowerCase().trim() === String(value).toLowerCase().trim(),
       );
       if (matchedCard) {
         target.serviceRate = matchedCard.hourlyRate;
@@ -516,7 +608,7 @@ export function ProjectQuoteDialog({
 ${result.lineItems
   .map(
     (i) =>
-      `- **${i.deliverable}** (${i.hours} hrs @ ${result.currency} ${i.serviceRate || result.hourlyRate}/hr [${i.serviceName || "Dev"}] - ${formatCurrencyValue(i.estimatedCost)}): ${i.description}`
+      `- **${i.deliverable}** (${i.hours} hrs @ ${result.currency} ${i.serviceRate || result.hourlyRate}/hr [${i.serviceName || "Dev"}] - ${formatCurrencyValue(i.estimatedCost)}): ${i.description}`,
   )
   .join("\n")}
 
@@ -524,7 +616,9 @@ ${result.lineItems
 ${result.assumptions.map((a) => `- ${a}`).join("\n")}
 `;
 
-      const updatedNotes = currentNotes ? `${currentNotes.trim()}${quoteMarkdown}` : quoteMarkdown.trim();
+      const updatedNotes = currentNotes
+        ? `${currentNotes.trim()}${quoteMarkdown}`
+        : quoteMarkdown.trim();
 
       const { error } = await supabase
         .from("projects")
@@ -537,10 +631,18 @@ ${result.assumptions.map((a) => `- ${a}`).join("\n")}
       if (error) throw error;
 
       // Save record to persistent storage
-      const rec = saveQuoteRecord(projectId, scopeText, result, originalResult || result, isCustomized);
+      const rec = saveQuoteRecord(
+        projectId,
+        scopeText,
+        result,
+        originalResult || result,
+        isCustomized,
+      );
       if (rec) setSavedAt(rec.savedAt);
 
-      toast.success(`Updated project value to ${formatCurrencyValue(result.recommendedQuote)} and saved quote!`);
+      toast.success(
+        `Updated project value to ${formatCurrencyValue(result.recommendedQuote)} and saved quote!`,
+      );
       if (onQuoteApplied) {
         onQuoteApplied(result.recommendedQuote, updatedNotes);
       }
@@ -564,7 +666,10 @@ Complexity: ${result.complexity}
 SERVICE EFFORT BREAKDOWN:
 --------------------------------------------------
 ${(result.serviceBreakdown || [])
-  .map((s) => `• ${s.serviceName}: ${s.hours} hrs @ ${result.currency} ${s.rate}/hr = ${formatCurrencyValue(s.totalCost)}`)
+  .map(
+    (s) =>
+      `• ${s.serviceName}: ${s.hours} hrs @ ${result.currency} ${s.rate}/hr = ${formatCurrencyValue(s.totalCost)}`,
+  )
   .join("\n")}
 
 SCOPE & DELIVERABLES BREAKDOWN:
@@ -572,7 +677,7 @@ SCOPE & DELIVERABLES BREAKDOWN:
 ${result.lineItems
   .map(
     (item, idx) =>
-      `${idx + 1}. ${item.deliverable} (${item.hours} hrs @ ${result.currency} ${item.serviceRate || result.hourlyRate}/hr [${item.serviceName || "Service"}] - ${formatCurrencyValue(item.estimatedCost)})\n   ${item.description}`
+      `${idx + 1}. ${item.deliverable} (${item.hours} hrs @ ${result.currency} ${item.serviceRate || result.hourlyRate}/hr [${item.serviceName || "Service"}] - ${formatCurrencyValue(item.estimatedCost)})\n   ${item.description}`,
   )
   .join("\n\n")}
 
@@ -603,7 +708,8 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                   AI Quote & Price Estimator
                 </DialogTitle>
                 <DialogDescription className="text-xs">
-                  Describe project work to receive an AI-powered effort estimation & cost quote for <strong className="text-foreground">{projectName}</strong>
+                  Describe project work to receive an AI-powered effort estimation & cost quote for{" "}
+                  <strong className="text-foreground">{projectName}</strong>
                 </DialogDescription>
               </div>
             </div>
@@ -648,7 +754,10 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
             {/* Input Form Section */}
             <div className="space-y-3 bg-paper-soft/50 rounded-xl p-4 border border-border/80">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <Label htmlFor="scope-text" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Label
+                  htmlFor="scope-text"
+                  className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"
+                >
                   <FileText className="h-3.5 w-3.5" /> Work Description & Scope Requirements
                 </Label>
 
@@ -672,7 +781,11 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                   {totalItemsCount > 0 && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-7 w-6 p-0 text-primary hover:bg-primary/10">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-6 p-0 text-primary hover:bg-primary/10"
+                        >
                           <ChevronDown className="h-3.5 w-3.5" />
                         </Button>
                       </DropdownMenuTrigger>
@@ -680,7 +793,10 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                         <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground">
                           Select Source to Insert
                         </DropdownMenuLabel>
-                        <DropdownMenuItem onSelect={() => handleLoadFromNotes()} className="gap-2 cursor-pointer">
+                        <DropdownMenuItem
+                          onSelect={() => handleLoadFromNotes()}
+                          className="gap-2 cursor-pointer"
+                        >
                           <FolderSync className="h-3.5 w-3.5 text-primary" />
                           <span className="font-medium">Load All ({totalItemsCount} items)</span>
                         </DropdownMenuItem>
@@ -716,7 +832,9 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                                 className="gap-2 cursor-pointer"
                               >
                                 <StickyNote className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                                <span className="truncate text-xs">{n.body ? n.body.slice(0, 40) : "Note"}</span>
+                                <span className="truncate text-xs">
+                                  {n.body ? n.body.slice(0, 40) : "Note"}
+                                </span>
                               </DropdownMenuItem>
                             ))}
                           </>
@@ -740,7 +858,9 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                                   className="gap-2 cursor-pointer"
                                 >
                                   <MessageSquare className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                                  <span className="truncate text-xs">{c.subject || c.summary || "Conversation"}</span>
+                                  <span className="truncate text-xs">
+                                    {c.subject || c.summary || "Conversation"}
+                                  </span>
                                 </DropdownMenuItem>
                               );
                             })}
@@ -760,6 +880,138 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                 rows={4}
                 className="text-sm resize-y"
               />
+
+              {/* PDF Document Upload Dropzone & Card */}
+              <div className="space-y-2">
+                {!pdfBase64 ? (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDraggingPdf(true);
+                    }}
+                    onDragLeave={() => setIsDraggingPdf(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDraggingPdf(false);
+                      const file = e.dataTransfer.files[0];
+                      if (file) handlePdfFileSelect(file);
+                    }}
+                    onClick={() => pdfInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-xl p-3 text-center transition cursor-pointer flex flex-col sm:flex-row items-center justify-between gap-3 ${
+                      isDraggingPdf
+                        ? "border-primary bg-primary/10"
+                        : "border-border/80 hover:border-primary/60 hover:bg-card/60 bg-card/30"
+                    }`}
+                  >
+                    <input
+                      ref={pdfInputRef}
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handlePdfFileSelect(file);
+                        e.target.value = "";
+                      }}
+                    />
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">
+                        <FileUp className="h-5 w-5" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                          Upload RFP or Scope PDF
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] font-mono font-normal text-muted-foreground border-border"
+                          >
+                            Optional PDF Upload
+                          </Badge>
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Drag & drop or click to attach a PDF document (RFP, SOW, requirements
+                          brief)
+                        </p>
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1.5 shrink-0 border-border"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pdfInputRef.current?.click();
+                      }}
+                    >
+                      <Upload className="h-3 w-3" /> Select PDF
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="border border-primary/30 bg-primary/5 rounded-xl p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">
+                          <FileText className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-semibold text-foreground truncate max-w-[220px] sm:max-w-[320px]">
+                              {pdfFileName}
+                            </p>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] font-mono bg-background text-primary border-primary/30"
+                            >
+                              {pdfFileSize}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                            <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+                            PDF attached for AI Scope Analysis & Quote
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={extractingPdf}
+                          onClick={handleExtractPdfText}
+                          className="h-7 text-[11px] gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                          title="Extract structured scope text from PDF into the requirements field above"
+                        >
+                          {extractingPdf ? (
+                            <>
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                              Extracting Text...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3 w-3 text-amber-500" />
+                              Extract PDF Text to Scope
+                            </>
+                          )}
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleRemovePdf}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                          title="Remove attached PDF"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Rate Card Banner & Controls */}
               <div className="rounded-lg border border-border bg-card p-3 space-y-3">
@@ -800,8 +1052,13 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                     <div className="space-y-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {rateCardItems.slice(0, 4).map((item) => (
-                          <Badge key={item.id} variant="outline" className="text-[10px] font-mono bg-muted/30">
-                            {item.name.split(" ")[0]}: {currencySymbol}{item.hourlyRate}/h
+                          <Badge
+                            key={item.id}
+                            variant="outline"
+                            className="text-[10px] font-mono bg-muted/30"
+                          >
+                            {item.name.split(" ")[0]}: {currencySymbol}
+                            {item.hourlyRate}/h
                           </Badge>
                         ))}
                         {rateCardItems.length > 4 && (
@@ -811,7 +1068,11 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                         )}
                       </div>
                       <p className="text-[11px] text-muted-foreground">
-                        AI will match deliverables to specialized service rates (Blended avg: <strong className="text-foreground">{currencySymbol} {hourlyRate}/hr</strong>)
+                        AI will match deliverables to specialized service rates (Blended avg:{" "}
+                        <strong className="text-foreground">
+                          {currencySymbol} {hourlyRate}/hr
+                        </strong>
+                        )
                       </p>
                     </div>
 
@@ -876,16 +1137,20 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                   <Button
                     type="button"
                     onClick={handleGenerate}
-                    disabled={loading || !scopeText.trim()}
-                    className="w-full gap-2 h-10"
+                    disabled={loading || (!scopeText.trim() && !pdfBase64)}
+                    className="w-full gap-2 h-10 font-semibold"
                   >
                     {loading ? (
                       <>
-                        <RefreshCw className="h-4 w-4 animate-spin" /> Analyzing Scope & Service Rates...
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        {pdfBase64
+                          ? "Analyzing PDF Document & Generating Quote..."
+                          : "Analyzing Scope & Service Rates..."}
                       </>
                     ) : (
                       <>
-                        <Sparkles className="h-4 w-4 text-amber-300" /> Calculate Project Quote
+                        <Sparkles className="h-4 w-4 text-amber-300" />
+                        {pdfBase64 ? "Generate Quote from PDF & Scope" : "Calculate Project Quote"}
                       </>
                     )}
                   </Button>
@@ -907,7 +1172,10 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                         <Pencil className="h-3 w-3" /> Amended by User
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/30 gap-1">
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/30 gap-1"
+                      >
                         <BadgeCheck className="h-3 w-3" /> AI Generated
                       </Badge>
                     )}
@@ -958,7 +1226,8 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                         {formatCurrencyValue(result.recommendedQuote)}
                       </p>
                       <p className="text-[11px] text-muted-foreground mt-0.5 font-mono">
-                        {result.recommendedHours} hrs @ blended ~{result.currency} {result.hourlyRate}/hr
+                        {result.recommendedHours} hrs @ blended ~{result.currency}{" "}
+                        {result.hourlyRate}/hr
                       </p>
                     </div>
                   </div>
@@ -970,7 +1239,8 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                     </div>
                     <div className="mt-2">
                       <p className="text-lg font-display font-semibold text-foreground">
-                        {formatCurrencyValue(result.minQuote)} – {formatCurrencyValue(result.maxQuote)}
+                        {formatCurrencyValue(result.minQuote)} –{" "}
+                        {formatCurrencyValue(result.maxQuote)}
                       </p>
                       <p className="text-[11px] text-muted-foreground mt-0.5 font-mono">
                         {result.minHours} – {result.maxHours} total hours
@@ -1042,10 +1312,16 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                     </span>
                     <div className="flex flex-wrap gap-2">
                       {result.serviceBreakdown.map((s, idx) => (
-                        <div key={idx} className="bg-card border border-border px-2.5 py-1.5 rounded-md text-xs flex items-center gap-2">
+                        <div
+                          key={idx}
+                          className="bg-card border border-border px-2.5 py-1.5 rounded-md text-xs flex items-center gap-2"
+                        >
                           <span className="font-medium text-foreground">{s.serviceName}</span>
                           <span className="font-mono text-[11px] text-muted-foreground">
-                            {s.hours}h @ {result.currency} {s.rate}/h = <strong className="text-foreground">{formatCurrencyValue(s.totalCost)}</strong>
+                            {s.hours}h @ {result.currency} {s.rate}/h ={" "}
+                            <strong className="text-foreground">
+                              {formatCurrencyValue(s.totalCost)}
+                            </strong>
                           </span>
                         </div>
                       ))}
@@ -1110,7 +1386,9 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                                 <div className="col-span-4">
                                   <Input
                                     value={item.deliverable}
-                                    onChange={(e) => handleUpdateLineItem(idx, "deliverable", e.target.value)}
+                                    onChange={(e) =>
+                                      handleUpdateLineItem(idx, "deliverable", e.target.value)
+                                    }
                                     placeholder="Deliverable title"
                                     className="h-8 text-xs font-medium"
                                   />
@@ -1119,35 +1397,54 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                                 <div className="col-span-3 flex items-center gap-1">
                                   <select
                                     value={item.serviceName || ""}
-                                    onChange={(e) => handleUpdateLineItem(idx, "serviceName", e.target.value)}
+                                    onChange={(e) =>
+                                      handleUpdateLineItem(idx, "serviceName", e.target.value)
+                                    }
                                     className="h-8 w-full rounded-md border border-input bg-background px-2 text-[11px]"
                                   >
                                     <option value="">Custom Service</option>
                                     {rateCardItems.map((rc) => (
                                       <option key={rc.id} value={rc.name}>
-                                        {rc.name} ({currencySymbol}{rc.hourlyRate}/h)
+                                        {rc.name} ({currencySymbol}
+                                        {rc.hourlyRate}/h)
                                       </option>
                                     ))}
                                   </select>
                                 </div>
 
                                 <div className="col-span-3 flex items-center gap-1">
-                                  <span className="text-[11px] font-mono text-muted-foreground shrink-0">{currencySymbol}</span>
+                                  <span className="text-[11px] font-mono text-muted-foreground shrink-0">
+                                    {currencySymbol}
+                                  </span>
                                   <Input
                                     type="number"
                                     value={item.serviceRate || result.hourlyRate}
-                                    onChange={(e) => handleUpdateLineItem(idx, "serviceRate", Number(e.target.value) || 0)}
+                                    onChange={(e) =>
+                                      handleUpdateLineItem(
+                                        idx,
+                                        "serviceRate",
+                                        Number(e.target.value) || 0,
+                                      )
+                                    }
                                     className="h-8 text-xs font-mono"
                                     placeholder="Rate/hr"
                                   />
-                                  <span className="text-[10px] text-muted-foreground shrink-0">/hr</span>
+                                  <span className="text-[10px] text-muted-foreground shrink-0">
+                                    /hr
+                                  </span>
                                 </div>
 
                                 <div className="col-span-1 flex items-center justify-center">
                                   <Input
                                     type="number"
                                     value={item.hours}
-                                    onChange={(e) => handleUpdateLineItem(idx, "hours", Number(e.target.value) || 0)}
+                                    onChange={(e) =>
+                                      handleUpdateLineItem(
+                                        idx,
+                                        "hours",
+                                        Number(e.target.value) || 0,
+                                      )
+                                    }
                                     className="h-8 text-xs font-mono text-center px-1"
                                   />
                                 </div>
@@ -1171,7 +1468,9 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                               <div>
                                 <Input
                                   value={item.description}
-                                  onChange={(e) => handleUpdateLineItem(idx, "description", e.target.value)}
+                                  onChange={(e) =>
+                                    handleUpdateLineItem(idx, "description", e.target.value)
+                                  }
                                   placeholder="Deliverable details and scope description..."
                                   className="h-7 text-[11px] text-muted-foreground"
                                 />
@@ -1179,14 +1478,24 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                             </div>
                           ) : (
                             <div className="grid grid-cols-12 items-center">
-                              <span className="col-span-4 font-medium text-foreground pr-2">{item.deliverable}</span>
+                              <span className="col-span-4 font-medium text-foreground pr-2">
+                                {item.deliverable}
+                              </span>
                               <div className="col-span-3 pr-2">
-                                <Badge variant="outline" className="text-[10px] font-mono bg-muted/40 text-foreground">
-                                  {item.serviceName || "Dev"} ({result.currency} {item.serviceRate || result.hourlyRate}/h)
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] font-mono bg-muted/40 text-foreground"
+                                >
+                                  {item.serviceName || "Dev"} ({result.currency}{" "}
+                                  {item.serviceRate || result.hourlyRate}/h)
                                 </Badge>
                               </div>
-                              <span className="col-span-3 text-muted-foreground truncate pr-2">{item.description}</span>
-                              <span className="col-span-1 text-center font-mono text-muted-foreground">{item.hours}h</span>
+                              <span className="col-span-3 text-muted-foreground truncate pr-2">
+                                {item.description}
+                              </span>
+                              <span className="col-span-1 text-center font-mono text-muted-foreground">
+                                {item.hours}h
+                              </span>
                               <span className="col-span-1 text-right font-mono font-medium text-foreground">
                                 {formatCurrencyValue(item.estimatedCost)}
                               </span>
@@ -1197,7 +1506,9 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                     </div>
 
                     <div className="grid grid-cols-12 p-2.5 bg-muted/30 font-semibold border-t border-border">
-                      <span className="col-span-9 text-right font-mono text-muted-foreground">Total Recommended Quote:</span>
+                      <span className="col-span-9 text-right font-mono text-muted-foreground">
+                        Total Recommended Quote:
+                      </span>
                       <span className="col-span-3 text-right font-mono text-primary text-sm">
                         {formatCurrencyValue(result.recommendedQuote)}
                       </span>
@@ -1240,7 +1551,12 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                           placeholder="Add assumption..."
                           className="h-7 text-[11px]"
                         />
-                        <Button type="submit" size="sm" variant="outline" className="h-7 px-2 text-[11px]">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-[11px]"
+                        >
                           Add
                         </Button>
                       </form>
@@ -1280,7 +1596,12 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
                           placeholder="Add risk/note..."
                           className="h-7 text-[11px]"
                         />
-                        <Button type="submit" size="sm" variant="outline" className="h-7 px-2 text-[11px]">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-[11px]"
+                        >
                           Add
                         </Button>
                       </form>
@@ -1293,18 +1614,33 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
 
           <DialogFooter className="flex-col sm:flex-row gap-2 border-t border-border pt-3 mt-2">
             {result && (
-              <Button variant="outline" type="button" onClick={handleCopyQuote} className="gap-1.5 text-xs">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={handleCopyQuote}
+                className="gap-1.5 text-xs"
+              >
                 <Copy className="h-3.5 w-3.5" /> Copy Quote Text
               </Button>
             )}
 
             <div className="flex items-center gap-2 ml-auto">
-              <Button variant="ghost" type="button" onClick={() => onOpenChange(false)} className="text-xs">
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={() => onOpenChange(false)}
+                className="text-xs"
+              >
                 Close
               </Button>
 
               {result && (
-                <Button type="button" onClick={handleApplyToProject} disabled={applying} className="gap-1.5 text-xs">
+                <Button
+                  type="button"
+                  onClick={handleApplyToProject}
+                  disabled={applying}
+                  className="gap-1.5 text-xs"
+                >
                   {applying ? "Applying..." : "Apply Quote to Project"}
                   <ArrowRight className="h-3.5 w-3.5" />
                 </Button>
@@ -1323,4 +1659,3 @@ ${result.risksAndNotes.map((r) => `• ${r}`).join("\n")}
     </>
   );
 }
-

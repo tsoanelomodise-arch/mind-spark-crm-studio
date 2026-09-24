@@ -5,11 +5,13 @@ import {
   createRootRouteWithContext,
   useRouter,
   useRouterState,
+  useNavigate,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { FolderKanban } from "lucide-react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider } from "../lib/auth-context";
@@ -66,6 +68,11 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
   }, [error]);
 
+  const isChunkError =
+    error?.message?.includes("dynamically imported module") ||
+    error?.message?.includes("Failed to fetch") ||
+    error?.name === "ChunkLoadError";
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
@@ -73,17 +80,23 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
           This page didn't load
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Something went wrong on our end. You can try refreshing or head back home.
+          {isChunkError
+            ? "A newer version of the application or module is available. Please reload the page to continue."
+            : "Something went wrong on our end. You can try refreshing or head back home."}
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button
             onClick={() => {
-              router.invalidate();
-              reset();
+              if (isChunkError) {
+                window.location.reload();
+              } else {
+                router.invalidate();
+                reset();
+              }
             }}
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            Try again
+            {isChunkError ? "Reload page" : "Try again"}
           </button>
           <a
             href="/"
@@ -100,19 +113,23 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 function TopNavigationBar() {
   const routerState = useRouterState();
   const currentPath = routerState.location.pathname;
+  const navigate = useNavigate();
   const [rateCardOpen, setRateCardOpen] = useState(false);
 
+  const isProjectsActive =
+    currentPath.startsWith("/projects");
+
   const isPipelineActive =
-    currentPath.startsWith("/pipeline") || currentPath.startsWith("/recurring");
+    currentPath === "/" || currentPath.startsWith("/pipeline") || currentPath.startsWith("/recurring");
 
   const isMapsActive =
-    currentPath === "/" || currentPath.startsWith("/maps");
+    currentPath.startsWith("/maps");
 
   const isPromptsActive =
     currentPath.startsWith("/prompts");
 
   const isImplActive =
-    currentPath.startsWith("/implementation");
+    currentPath.startsWith("/implementation") || isProjectsActive;
 
   const isClientsActive =
     currentPath.startsWith("/clients") || currentPath.startsWith("/logins");
@@ -137,19 +154,6 @@ function TopNavigationBar() {
 
         {/* Navigation links */}
         <nav className="hidden md:flex items-center gap-1">
-          {/* Mind Maps Link */}
-          <Link
-            to="/"
-            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl transition-all ${
-              isMapsActive
-                ? "bg-black text-white shadow-2xs"
-                : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-            }`}
-          >
-            <MindMapIcon size={14} />
-            <span>Mind Maps</span>
-          </Link>
-
           {/* Pipeline Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -163,44 +167,71 @@ function TopNavigationBar() {
               <span>Pipeline</span>
               <ChevronDownIcon size={12} className="opacity-70" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48 p-1 rounded-xl shadow-lg border border-border">
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/pipeline"
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
-                    currentPath.startsWith("/pipeline") ? "bg-black text-white font-semibold" : ""
-                  }`}
-                >
-                  <PipelineIcon size={14} />
-                  <span>Pipeline Board</span>
-                </Link>
+            <DropdownMenuContent align="end" className="w-52 p-1 rounded-xl shadow-lg border border-border">
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/pipeline" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/pipeline") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <PipelineIcon size={14} />
+                <span>Pipeline Board</span>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/recurring"
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
-                    currentPath.startsWith("/recurring") ? "bg-black text-white font-semibold" : ""
-                  }`}
-                >
-                  <RecurringIcon size={14} />
-                  <span>Recurring Projects</span>
-                </Link>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/recurring" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/recurring") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <RecurringIcon size={14} />
+                <span>Recurring Projects</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Implementation Link */}
-          <Link
-            to="/implementation"
-            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl transition-all ${
-              isImplActive
-                ? "bg-black text-white shadow-2xs"
-                : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-            }`}
-          >
-            <ImplementationIcon size={14} />
-            <span>Implementation</span>
-          </Link>
+          {/* Implementation Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl transition-all outline-none cursor-pointer ${
+                isImplActive || isMapsActive
+                  ? "bg-black text-white shadow-2xs"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+              }`}
+            >
+              <ImplementationIcon size={14} />
+              <span>Implementation</span>
+              <ChevronDownIcon size={12} className="opacity-70" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52 p-1 rounded-xl shadow-lg border border-border">
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/implementation" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/implementation") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <ImplementationIcon size={14} />
+                <span>Implementation Board</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/projects" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/projects") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <FolderKanban size={14} />
+                <span>Projects Directory</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/maps" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  isMapsActive ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <MindMapIcon size={14} />
+                <span>Mind Maps</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* Wiki Dropdown (includes Wiki Knowledge Base & Prompts) */}
           <DropdownMenu>
@@ -216,27 +247,23 @@ function TopNavigationBar() {
               <ChevronDownIcon size={12} className="opacity-70" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52 p-1 rounded-xl shadow-lg border border-border">
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/wiki"
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
-                    currentPath.startsWith("/wiki") ? "bg-black text-white font-semibold" : ""
-                  }`}
-                >
-                  <WikiIcon size={14} />
-                  <span>Knowledge Base & SOPs</span>
-                </Link>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/wiki" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/wiki") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <WikiIcon size={14} />
+                <span>Knowledge Base & SOPs</span>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/prompts"
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
-                    isPromptsActive ? "bg-black text-white font-semibold" : ""
-                  }`}
-                >
-                  <PromptsIcon size={14} />
-                  <span>Prompts Library</span>
-                </Link>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/prompts" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  isPromptsActive ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <PromptsIcon size={14} />
+                <span>Prompts Library</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -255,27 +282,23 @@ function TopNavigationBar() {
               <ChevronDownIcon size={12} className="opacity-70" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48 p-1 rounded-xl shadow-lg border border-border">
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/clients"
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
-                    currentPath.startsWith("/clients") ? "bg-black text-white font-semibold" : ""
-                  }`}
-                >
-                  <ClientsIcon size={14} />
-                  <span>Clients Directory</span>
-                </Link>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/clients" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/clients") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <ClientsIcon size={14} />
+                <span>Clients Directory</span>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/logins"
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
-                    currentPath.startsWith("/logins") ? "bg-black text-white font-semibold" : ""
-                  }`}
-                >
-                  <LoginsIcon size={14} />
-                  <span>Client Logins</span>
-                </Link>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/logins" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/logins") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <LoginsIcon size={14} />
+                <span>Client Logins</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -294,35 +317,31 @@ function TopNavigationBar() {
               <ChevronDownIcon size={12} className="opacity-70" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48 p-1 rounded-xl shadow-lg border border-border">
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/team"
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
-                    currentPath.startsWith("/team") ? "bg-black text-white font-semibold" : ""
-                  }`}
-                >
-                  <WorkspaceIcon size={14} />
-                  <span>Team Directory</span>
-                </Link>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/team" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/team") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <WorkspaceIcon size={14} />
+                <span>Team Directory</span>
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => setRateCardOpen(true)}
+                onSelect={() => setRateCardOpen(true)}
                 className="flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer"
               >
                 <RateCardIcon size={14} />
                 <span>Service Rate Card</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/changelog"
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
-                    currentPath.startsWith("/changelog") ? "bg-black text-white font-semibold" : ""
-                  }`}
-                >
-                  <ChangelogIcon size={14} />
-                  <span>System Changelog</span>
-                </Link>
+              <DropdownMenuItem
+                onSelect={() => navigate({ to: "/changelog" })}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer ${
+                  currentPath.startsWith("/changelog") ? "bg-black text-white font-semibold" : ""
+                }`}
+              >
+                <ChangelogIcon size={14} />
+                <span>System Changelog</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -413,6 +432,14 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   useEffect(() => {
+    const handleSync = () => {
+      queryClient.invalidateQueries();
+    };
+    window.addEventListener("supabase_storage_sync", handleSync);
+    return () => window.removeEventListener("supabase_storage_sync", handleSync);
+  }, [queryClient]);
+
+  useEffect(() => {
     const handleResizeObserverError = (e: ErrorEvent) => {
       if (
         e.message?.includes("ResizeObserver loop completed with undelivered notifications") ||
@@ -422,8 +449,24 @@ function RootComponent() {
         e.preventDefault();
       }
     };
+
+    const handlePreloadError = (e: Event) => {
+      e.preventDefault();
+      const key = "mind_spark_preload_retry";
+      const last = sessionStorage.getItem(key);
+      const now = Date.now();
+      if (!last || now - Number(last) > 8000) {
+        sessionStorage.setItem(key, String(now));
+        window.location.reload();
+      }
+    };
+
     window.addEventListener("error", handleResizeObserverError);
-    return () => window.removeEventListener("error", handleResizeObserverError);
+    window.addEventListener("vite:preloadError", handlePreloadError);
+    return () => {
+      window.removeEventListener("error", handleResizeObserverError);
+      window.removeEventListener("vite:preloadError", handlePreloadError);
+    };
   }, []);
 
   return (

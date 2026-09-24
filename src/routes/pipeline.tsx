@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { PIPELINE_STAGES, REPEAT_INTERVALS, repeatLabel, DATE_FILTERS, matchesDateFilter, daysUntil, formatShortDate, formatZAR, formatZARCompact, STAGE_WIN_PROBABILITY, type PipelineStage, type RepeatInterval, type DateFilter } from "@/lib/pipeline";
@@ -16,14 +16,16 @@ import {
 import { ProjectDatesPopover } from "@/components/ProjectDatesPopover";
 import { ProjectValuePopover } from "@/components/ProjectValuePopover";
 import { ProjectClientPopover } from "@/components/ProjectClientPopover";
+import { ProjectNamePopover } from "@/components/ProjectNamePopover";
 import { DeleteProjectButton } from "@/components/DeleteProjectButton";
 import { ProjectQuoteDialog } from "@/components/ProjectQuoteDialog";
 import { ProjectNotesDialog } from "@/components/ProjectNotesDialog";
 import { hasSavedQuoteRecord } from "@/lib/quote-storage";
-import { Trash2, Calculator, FileText } from "lucide-react";
+import { Trash2, Calculator, FileText, Sparkles, Edit3 } from "lucide-react";
 import { toast } from "sonner";
 import { PROJECT_TYPES, useProjectTypes } from "@/lib/project-types";
 import { FormErrorAlert } from "@/components/FormErrorAlert";
+import { PipelineAiScoutDialog } from "@/components/PipelineAiScoutDialog";
 
 
 export const Route = createFileRoute("/pipeline")({
@@ -57,13 +59,14 @@ function PipelinePage() {
   const { user } = useAuth();
   const [dragId, setDragId] = useState<string | null>(null);
   const [overStage, setOverStage] = useState<PipelineStage | null>(null);
-  const [dragging, setDragging] = useState(false);
+  const isDraggingRef = useRef(false);
   const [showArchived, setShowArchived] = useState(false);
   const [showDelivered, setShowDelivered] = useState(true);
   const [showLost, setShowLost] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [quoteProject, setQuoteProject] = useState<ProjectRow | null>(null);
   const [notesProject, setNotesProject] = useState<ProjectRow | null>(null);
+  const [aiScoutOpen, setAiScoutOpen] = useState(false);
 
   const { data: allClientNotes = [] } = useQuery({
     queryKey: ["client-notes", "all"],
@@ -266,8 +269,14 @@ function PipelinePage() {
             Drag a project card between stages to update its status. Projects with legacy statuses appear below.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <PipelineTabs current="pipeline" />
+          <Button
+            onClick={() => setAiScoutOpen(true)}
+            className="gap-2 bg-gradient-to-r from-indigo-600 via-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-medium shadow-sm transition-all cursor-pointer"
+          >
+            <Sparkles className="h-4 w-4 text-indigo-200 animate-pulse" /> AI Refresher Scout
+          </Button>
           <NewProjectButton clients={clients} />
         </div>
       </div>
@@ -369,23 +378,39 @@ function PipelinePage() {
                       key={p.id}
                       className="px-4 py-2.5 flex items-center gap-3 hover:bg-paper-soft/40 transition"
                     >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          router.navigate({
-                            to: "/implementation/$projectId",
-                            params: { projectId: p.id },
-                          })
-                        }
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <div className="font-display font-semibold text-sm truncate hover:underline underline-offset-4">
-                          {p.name}
+                      <div className="min-w-0 flex-1 text-left">
+                        <div className="flex items-center gap-1">
+                          <Link
+                            to="/implementation/$projectId"
+                            params={{ projectId: p.id }}
+                            className="font-display font-semibold text-sm truncate hover:underline underline-offset-4 text-left cursor-pointer text-foreground hover:text-primary"
+                          >
+                            {p.name}
+                          </Link>
+                          <ProjectNamePopover
+                            projectId={p.id}
+                            currentName={p.name}
+                            align="start"
+                            trigger={
+                              <button
+                                type="button"
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-1 rounded text-muted-foreground/60 hover:text-foreground hover:bg-secondary transition cursor-pointer"
+                                title="Rename project"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                              </button>
+                            }
+                          />
                         </div>
-                        <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground truncate">
+                        <Link
+                          to="/implementation/$projectId"
+                          params={{ projectId: p.id }}
+                          className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground truncate hover:text-foreground text-left block cursor-pointer"
+                        >
                           {clientName.get(p.client_id) ?? "—"}
-                        </div>
-                      </button>
+                        </Link>
+                      </div>
                       {meta && (
                         <span
                           className={`font-mono text-[10px] uppercase tracking-widest border rounded-full px-2 py-0.5 ${
@@ -491,10 +516,13 @@ function PipelinePage() {
                         <div
                           key={p.id}
                           draggable
-                          onDragStart={() => { setDragId(p.id); setDragging(true); }}
-                          onDragEnd={() => { setDragId(null); setOverStage(null); setTimeout(() => setDragging(false), 0); }}
+                          onDragStart={() => { setDragId(p.id); isDraggingRef.current = true; }}
+                          onDragEnd={() => { setDragId(null); setOverStage(null); setTimeout(() => { isDraggingRef.current = false; }, 50); }}
                           onClick={() => {
-                            if (dragging) return;
+                            if (isDraggingRef.current) {
+                              isDraggingRef.current = false;
+                              return;
+                            }
                             router.navigate({
                               to: "/implementation/$projectId",
                               params: { projectId: p.id },
@@ -518,7 +546,40 @@ function PipelinePage() {
                           <div className="flex items-start gap-2">
                             <GripVertical className="h-3.5 w-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
                             <div className="min-w-0 flex-1">
-                              <div className="font-display font-semibold text-sm truncate group-hover:underline underline-offset-4">{p.name}</div>
+                              <div className="flex items-center justify-between gap-1">
+                                <Link
+                                  to="/implementation/$projectId"
+                                  params={{ projectId: p.id }}
+                                  onClick={(e) => {
+                                    if (isDraggingRef.current) {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      isDraggingRef.current = false;
+                                      return;
+                                    }
+                                    e.stopPropagation();
+                                  }}
+                                  className="font-display font-semibold text-sm truncate hover:underline underline-offset-4 text-foreground hover:text-primary block cursor-pointer"
+                                >
+                                  {p.name}
+                                </Link>
+                                <ProjectNamePopover
+                                  projectId={p.id}
+                                  currentName={p.name}
+                                  align="start"
+                                  trigger={
+                                    <button
+                                      type="button"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="opacity-0 group-hover:opacity-100 transition p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer shrink-0"
+                                      title="Rename project"
+                                      aria-label="Rename project"
+                                    >
+                                      <Edit3 className="h-3 w-3" />
+                                    </button>
+                                  }
+                                />
+                              </div>
                               <Link
                                 to="/clients/$clientId"
                                 params={{ clientId: p.client_id }}
@@ -624,6 +685,7 @@ function PipelinePage() {
                               )}
                             </div>
                             <div className="flex flex-col items-center gap-1 shrink-0">
+
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -740,8 +802,18 @@ function PipelinePage() {
                   <div
                     key={p.id}
                     draggable
-                    onDragStart={() => setDragId(p.id)}
-                    onDragEnd={() => { setDragId(null); setOverStage(null); }}
+                    onDragStart={() => { setDragId(p.id); isDraggingRef.current = true; }}
+                    onDragEnd={() => { setDragId(null); setOverStage(null); setTimeout(() => { isDraggingRef.current = false; }, 50); }}
+                    onClick={() => {
+                      if (isDraggingRef.current) {
+                        isDraggingRef.current = false;
+                        return;
+                      }
+                      router.navigate({
+                        to: "/implementation/$projectId",
+                        params: { projectId: p.id },
+                      });
+                    }}
                     className={`border border-border rounded-md px-3 py-2 bg-card cursor-grab active:cursor-grabbing hover:border-foreground/50 transition ${
                       dragId === p.id ? "opacity-40" : ""
                     }`}
@@ -750,7 +822,22 @@ function PipelinePage() {
                         <div className="flex items-center gap-2">
                           <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                           <div>
-                            <div className="text-sm font-semibold">{p.name}</div>
+                            <Link
+                              to="/implementation/$projectId"
+                              params={{ projectId: p.id }}
+                              onClick={(e) => {
+                                if (isDraggingRef.current) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  isDraggingRef.current = false;
+                                  return;
+                                }
+                                e.stopPropagation();
+                              }}
+                              className="text-sm font-semibold hover:underline text-foreground block cursor-pointer"
+                            >
+                              {p.name}
+                            </Link>
                             <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
                               {clientName.get(p.client_id) ?? "—"} · {p.status}
                             </div>
@@ -793,18 +880,13 @@ function PipelinePage() {
                     >
                       <Briefcase className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
                       <div className="min-w-0 flex-1">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            router.navigate({
-                              to: "/implementation/$projectId",
-                              params: { projectId: p.id },
-                            })
-                          }
-                          className="text-sm font-semibold truncate block text-left hover:underline underline-offset-4 w-full"
+                        <Link
+                          to="/implementation/$projectId"
+                          params={{ projectId: p.id }}
+                          className="text-sm font-semibold truncate block text-left hover:underline underline-offset-4 w-full cursor-pointer text-foreground hover:text-primary"
                         >
                           {p.name}
-                        </button>
+                        </Link>
                         <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground truncate">
                           {clientName.get(p.client_id) ?? "—"} · {p.status}
                         </div>
@@ -871,6 +953,7 @@ function PipelinePage() {
         open={notesProject !== null}
         onOpenChange={(open) => !open && setNotesProject(null)}
       />
+      <PipelineAiScoutDialog open={aiScoutOpen} onOpenChange={setAiScoutOpen} />
     </div>
   );
 }

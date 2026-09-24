@@ -10,14 +10,25 @@ const serviceRateSchema = z.object({
   description: z.string().optional(),
 });
 
-const inputSchema = z.object({
-  projectName: z.string().optional(),
-  projectType: z.string().optional(),
-  scopeText: z.string().min(1, "Scope description is required").max(50_000),
-  hourlyRate: z.number().min(1).max(100_000).default(750),
-  currency: z.string().default("ZAR"),
-  serviceRates: z.array(serviceRateSchema).optional(),
-});
+const inputSchema = z
+  .object({
+    projectName: z.string().optional(),
+    projectType: z.string().optional(),
+    scopeText: z.string().max(100_000).optional(),
+    pdfBase64: z.string().optional(),
+    pdfFileName: z.string().optional(),
+    hourlyRate: z.number().min(1).max(100_000).default(750),
+    currency: z.string().default("ZAR"),
+    serviceRates: z.array(serviceRateSchema).optional(),
+  })
+  .refine(
+    (data) =>
+      (data.scopeText && data.scopeText.trim().length > 0) ||
+      (data.pdfBase64 && data.pdfBase64.trim().length > 0),
+    {
+      message: "Please enter a scope description or upload a PDF document.",
+    },
+  );
 
 export interface QuoteBreakdownItem {
   deliverable: string;
@@ -82,53 +93,104 @@ export const generateProjectQuote = createServerFn({ method: "POST" })
       },
     });
 
-    const serviceCardText = data.serviceRates && data.serviceRates.length > 0
-      ? `\n\nAgency Service Rate Card:\n` +
-        data.serviceRates
-          .map((s) => `- ${s.name} (${s.category || "General"}): ${data.currency} ${s.hourlyRate}/hr — ${s.description || ""}`)
-          .join("\n")
-      : "";
+    const serviceCardText =
+      data.serviceRates && data.serviceRates.length > 0
+        ? `\n\nAgency Service Rate Card:\n` +
+          data.serviceRates
+            .map(
+              (s) =>
+                `- ${s.name} (${s.category || "General"}): ${data.currency} ${s.hourlyRate}/hr — ${s.description || ""}`,
+            )
+            .join("\n")
+        : "";
+
+    const pdfNotice = data.pdfFileName
+      ? `\nAttached RFP / Scope Document: ${data.pdfFileName}`
+      : data.pdfBase64
+        ? "\nAttached PDF Requirement Document provided."
+        : "";
+
+    const userScopeText = data.scopeText?.trim()
+      ? data.scopeText.trim()
+      : "Extract and quote all work requirements, deliverables, tech specifications, and scope items from the attached PDF document.";
 
     const userPrompt = `Project Name: ${data.projectName || "Unnamed Project"}
 Project Type/Category: ${data.projectType || "General Software/Agency Project"}
-Base Default Hourly Rate: ${data.currency} ${data.hourlyRate}/hour${serviceCardText}
+Base Default Hourly Rate: ${data.currency} ${data.hourlyRate}/hour${serviceCardText}${pdfNotice}
 
 User Scope & Requirements Description:
 """
-${data.scopeText}
+${userScopeText}
 """
 
-Please analyze the scope text and calculate a comprehensive price quote and effort estimation. Assign appropriate service roles from the rate card if available.`;
+Please analyze the scope text and any attached PDF requirement document thoroughly to calculate a comprehensive price quote and effort estimation. Assign appropriate service roles from the rate card if available.`;
+
+    const contentsParts: Array<{ inlineData?: { mimeType: string; data: string }; text?: string }> =
+      [];
+
+    if (data.pdfBase64 && data.pdfBase64.trim().length > 0) {
+      let rawBase64 = data.pdfBase64.trim();
+      if (rawBase64.includes(";base64,")) {
+        rawBase64 = rawBase64.split(";base64,")[1];
+      }
+      contentsParts.push({
+        inlineData: {
+          mimeType: "application/pdf",
+          data: rawBase64,
+        },
+      });
+    }
+
+    contentsParts.push({
+      text: `${BASE_SYSTEM}\n\n${userPrompt}`,
+    });
 
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
-        contents: [
-          {
-            text: `${BASE_SYSTEM}\n\n${userPrompt}`,
-          },
-        ],
+        model: "gemini-3.7-flash",
+        contents: contentsParts.length === 1 ? contentsParts[0].text : { parts: contentsParts },
         config: {
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              summary: { type: Type.STRING, description: "Executive summary of the quote and scope evaluation" },
+              summary: {
+                type: Type.STRING,
+                description: "Executive summary of the quote and scope evaluation",
+              },
               complexity: { type: Type.STRING, enum: ["Low", "Medium", "High", "Enterprise"] },
               recommendedHours: { type: Type.NUMBER, description: "Recommended total hours" },
               minHours: { type: Type.NUMBER, description: "Optimistic/minimum total hours" },
               maxHours: { type: Type.NUMBER, description: "Conservative/maximum total hours" },
-              suggestedTimeline: { type: Type.STRING, description: "Estimated completion timeline (e.g. 2-3 weeks)" },
+              suggestedTimeline: {
+                type: Type.STRING,
+                description: "Estimated completion timeline (e.g. 2-3 weeks)",
+              },
               lineItems: {
                 type: Type.ARRAY,
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    deliverable: { type: Type.STRING, description: "Name of milestone or deliverable" },
-                    description: { type: Type.STRING, description: "Brief details of what is included" },
-                    hours: { type: Type.NUMBER, description: "Hours estimated for this deliverable" },
-                    serviceName: { type: Type.STRING, description: "Assigned service name from rate card" },
-                    serviceRate: { type: Type.NUMBER, description: "Specific hourly rate for assigned service" },
+                    deliverable: {
+                      type: Type.STRING,
+                      description: "Name of milestone or deliverable",
+                    },
+                    description: {
+                      type: Type.STRING,
+                      description: "Brief details of what is included",
+                    },
+                    hours: {
+                      type: Type.NUMBER,
+                      description: "Hours estimated for this deliverable",
+                    },
+                    serviceName: {
+                      type: Type.STRING,
+                      description: "Assigned service name from rate card",
+                    },
+                    serviceRate: {
+                      type: Type.NUMBER,
+                      description: "Specific hourly rate for assigned service",
+                    },
                   },
                   required: ["deliverable", "description", "hours"],
                 },
@@ -167,16 +229,29 @@ Please analyze the scope text and calculate a comprehensive price quote and effo
       }
 
       let computedTotalCost = 0;
-      const serviceSummaryMap = new Map<string, { hours: number; rate: number; totalCost: number }>();
+      const serviceSummaryMap = new Map<
+        string,
+        { hours: number; rate: number; totalCost: number }
+      >();
 
-      const lineItems: QuoteBreakdownItem[] = (parsed.lineItems || []).map((item: any) => {
+      const lineItems: QuoteBreakdownItem[] = (
+        (parsed.lineItems as Array<{
+          deliverable?: string;
+          description?: string;
+          hours?: number;
+          serviceName?: string;
+          serviceRate?: number;
+        }>) || []
+      ).map((item) => {
         const hrs = Math.max(1, Math.round(item.hours || 2));
-        let sName = item.serviceName || "General Development";
+        const sName = item.serviceName || "General Development";
         let sRate = item.serviceRate || defaultRate;
 
         // Verify if matched in rate map
         if (data.serviceRates && data.serviceRates.length > 0) {
-          const matchedKey = Array.from(rateMap.keys()).find((k) => k.includes(sName.toLowerCase().trim()) || sName.toLowerCase().trim().includes(k));
+          const matchedKey = Array.from(rateMap.keys()).find(
+            (k) => k.includes(sName.toLowerCase().trim()) || sName.toLowerCase().trim().includes(k),
+          );
           if (matchedKey) {
             sRate = rateMap.get(matchedKey)!;
           }
@@ -204,12 +279,17 @@ Please analyze the scope text and calculate a comprehensive price quote and effo
       const totalHours = lineItems.reduce((acc, i) => acc + i.hours, 0);
       const recHours = Math.max(1, totalHours || Math.round(parsed.recommendedHours || 10));
       const minHours = Math.max(1, Math.round(parsed.minHours || Math.round(recHours * 0.8)));
-      const maxHours = Math.max(recHours, Math.round(parsed.maxHours || Math.round(recHours * 1.3)));
+      const maxHours = Math.max(
+        recHours,
+        Math.round(parsed.maxHours || Math.round(recHours * 1.3)),
+      );
 
       const finalQuote = computedTotalCost > 0 ? computedTotalCost : recHours * defaultRate;
       const effectiveBlendedRate = recHours > 0 ? Math.round(finalQuote / recHours) : defaultRate;
 
-      const serviceBreakdown: ServiceSummaryBreakdown[] = Array.from(serviceSummaryMap.entries()).map(([name, val]) => ({
+      const serviceBreakdown: ServiceSummaryBreakdown[] = Array.from(
+        serviceSummaryMap.entries(),
+      ).map(([name, val]) => ({
         serviceName: name,
         hours: val.hours,
         rate: val.rate,
@@ -229,8 +309,12 @@ Please analyze the scope text and calculate a comprehensive price quote and effo
         currency: data.currency,
         lineItems,
         serviceBreakdown,
-        assumptions: parsed.assumptions || ["Client provides required branding assets and feedback promptly."],
-        risksAndNotes: parsed.risksAndNotes || ["Scope changes during development may affect final timeline and cost."],
+        assumptions: parsed.assumptions || [
+          "Client provides required branding assets and feedback promptly.",
+        ],
+        risksAndNotes: parsed.risksAndNotes || [
+          "Scope changes during development may affect final timeline and cost.",
+        ],
         suggestedTimeline: parsed.suggestedTimeline || "2-3 weeks",
       };
     } catch (err) {
@@ -240,3 +324,63 @@ Please analyze the scope text and calculate a comprehensive price quote and effo
     }
   });
 
+export const extractPdfScopeText = createServerFn({ method: "POST" })
+  .validator((data: unknown) =>
+    z
+      .object({
+        pdfBase64: z.string().min(1, "PDF base64 is required"),
+        pdfFileName: z.string().optional(),
+      })
+      .parse(data),
+  )
+  .handler(async ({ data }): Promise<{ scopeText: string }> => {
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      process.env.LOVABLE_API_KEY ||
+      process.env.VITE_GEMINI_API_KEY ||
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    if (!apiKey) throw new Error("Gemini API key is not configured.");
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+
+    let rawBase64 = data.pdfBase64.trim();
+    if (rawBase64.includes(";base64,")) {
+      rawBase64 = rawBase64.split(";base64,")[1];
+    }
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: "application/pdf",
+                data: rawBase64,
+              },
+            },
+            {
+              text: `You are an expert technical project estimator. Please read the attached PDF document (${data.pdfFileName || "Scope / RFP document"}) and extract a structured, clean, comprehensive markdown bullet-point description of all requested project deliverables, functional features, design requirements, technical stack specifications, integrations, and milestones.
+
+Formatting guidelines:
+- Return ONLY the extracted scope bullet points and concise section headers.
+- Keep the language clear, actionable, and ready to use in a software scope estimate.
+- Do not include conversational introductory or concluding filler.`,
+            },
+          ],
+        },
+      });
+
+      return { scopeText: response.text?.trim() || "No text could be extracted from PDF." };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to extract text from PDF: ${msg}`);
+    }
+  });

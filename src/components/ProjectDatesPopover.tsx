@@ -11,28 +11,48 @@ export type ProjectDates = {
   id: string;
   start_date: string | null;
   due_date: string | null;
-  next_occurrence_date: string | null;
-  repeat_interval: string;
+  next_occurrence_date?: string | null;
+  repeat_interval?: string | null;
 };
+
+interface ProjectDatesPopoverProps {
+  project?: ProjectDates;
+  projectId?: string;
+  startDate?: string | null;
+  dueDate?: string | null;
+  nextOccurrenceDate?: string | null;
+  repeatInterval?: string | null;
+  trigger: ReactNode;
+  align?: "start" | "center" | "end";
+}
 
 export function ProjectDatesPopover({
   project,
+  projectId,
+  startDate,
+  dueDate,
+  nextOccurrenceDate,
+  repeatInterval,
   trigger,
   align = "end",
-}: {
-  project: ProjectDates;
-  trigger: ReactNode;
-  align?: "start" | "center" | "end";
-}) {
+}: ProjectDatesPopoverProps) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [start, setStart] = useState(project.start_date ?? "");
-  const [due, setDue] = useState(project.due_date ?? "");
-  const [next, setNext] = useState(project.next_occurrence_date ?? "");
+
+  const pId = project?.id ?? projectId ?? "";
+  const pStartDate = project?.start_date ?? startDate ?? null;
+  const pDueDate = project?.due_date ?? dueDate ?? null;
+  const pNextDate = project?.next_occurrence_date ?? nextOccurrenceDate ?? null;
+  const pRepeatInterval = project?.repeat_interval ?? repeatInterval ?? "none";
+
+  const [start, setStart] = useState(pStartDate ?? "");
+  const [due, setDue] = useState(pDueDate ?? "");
+  const [next, setNext] = useState(pNextDate ?? "");
   const [saving, setSaving] = useState(false);
-  const isRepeating = project.repeat_interval && project.repeat_interval !== "none";
+  const isRepeating = Boolean(pRepeatInterval && pRepeatInterval !== "none");
 
   const save = async () => {
+    if (!pId) return;
     setSaving(true);
     const { error } = await supabase
       .from("projects")
@@ -41,7 +61,7 @@ export function ProjectDatesPopover({
         due_date: due || null,
         next_occurrence_date: isRepeating ? (next || null) : null,
       })
-      .eq("id", project.id);
+      .eq("id", pId);
     setSaving(false);
     if (error) {
       toast.error(error.message);
@@ -56,9 +76,9 @@ export function ProjectDatesPopover({
     <Popover open={open} onOpenChange={(o) => {
       setOpen(o);
       if (o) {
-        setStart(project.start_date ?? "");
-        setDue(project.due_date ?? "");
-        setNext(project.next_occurrence_date ?? "");
+        setStart(pStartDate ?? "");
+        setDue(pDueDate ?? "");
+        setNext(pNextDate ?? "");
       }
     }}>
       <PopoverTrigger asChild onClick={(e) => e.stopPropagation()}>
@@ -72,9 +92,9 @@ export function ProjectDatesPopover({
       >
         <div className="space-y-3">
           <div>
-            <Label htmlFor={`pd-start-${project.id}`} className="text-xs">Start date</Label>
+            <Label htmlFor={`pd-start-${pId}`} className="text-xs">Start date</Label>
             <Input
-              id={`pd-start-${project.id}`}
+              id={`pd-start-${pId}`}
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
@@ -82,9 +102,9 @@ export function ProjectDatesPopover({
             />
           </div>
           <div>
-            <Label htmlFor={`pd-due-${project.id}`} className="text-xs">Due date</Label>
+            <Label htmlFor={`pd-due-${pId}`} className="text-xs">Due date</Label>
             <Input
-              id={`pd-due-${project.id}`}
+              id={`pd-due-${pId}`}
               type="date"
               value={due}
               onChange={(e) => setDue(e.target.value)}
@@ -93,9 +113,9 @@ export function ProjectDatesPopover({
           </div>
           {isRepeating && (
             <div>
-              <Label htmlFor={`pd-next-${project.id}`} className="text-xs">Next occurrence</Label>
+              <Label htmlFor={`pd-next-${pId}`} className="text-xs">Next occurrence</Label>
               <Input
-                id={`pd-next-${project.id}`}
+                id={`pd-next-${pId}`}
                 type="date"
                 value={next}
                 onChange={(e) => setNext(e.target.value)}

@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ProjectClientPopover } from "@/components/ProjectClientPopover";
+import { ProjectNamePopover } from "@/components/ProjectNamePopover";
 import { ProjectQuoteDialog } from "@/components/ProjectQuoteDialog";
 import { FormErrorAlert } from "@/components/FormErrorAlert";
 import {
@@ -266,9 +267,28 @@ function ProjectTasksPage() {
             <span className="text-muted-foreground/60">·</span>
             {tasks.length} tasks
           </p>
-          <h1 className="mt-3 font-display text-4xl md:text-5xl font-semibold leading-[0.95] tracking-tight truncate">
-            {project?.name ?? "…"}
-          </h1>
+          <div className="mt-3 flex items-center gap-2">
+            <h1 className="font-display text-4xl md:text-5xl font-semibold leading-[0.95] tracking-tight truncate">
+              {project?.name ?? "…"}
+            </h1>
+            {project && (
+              <ProjectNamePopover
+                projectId={project.id}
+                currentName={project.name}
+                align="start"
+                trigger={
+                  <button
+                    type="button"
+                    className="p-1.5 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer shrink-0"
+                    title="Rename project"
+                    aria-label="Rename project"
+                  >
+                    <Edit3 className="h-5 w-5" />
+                  </button>
+                }
+              />
+            )}
+          </div>
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
               Stage
@@ -661,9 +681,11 @@ function TaskDialog({
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {members.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>{m.email}</SelectItem>
-                  ))}
+                  {members
+                    .filter((m) => m.id && m.id !== "unassigned")
+                    .map((m) => (
+                      <SelectItem key={m.id} value={m.id}>{m.email}</SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

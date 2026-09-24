@@ -26,7 +26,7 @@ function MapEditor() {
     setMounted(true);
     const m = getMap(id);
     if (!m) {
-      navigate({ to: "/" });
+      navigate({ to: "/maps" });
     } else {
       setMeta(m);
     }
@@ -43,7 +43,7 @@ function MapEditor() {
   const handleConfirmDelete = () => {
     deleteMap(meta.id);
     setShowDeleteModal(false);
-    navigate({ to: "/" });
+    navigate({ to: "/maps" });
   };
 
   return (
@@ -51,7 +51,7 @@ function MapEditor() {
       <header className="flex items-center justify-between border-b border-border bg-card/90 backdrop-blur-md px-6 py-3.5 z-20 shadow-2xs">
         <div className="flex items-center gap-4 min-w-0">
           <Link
-            to="/"
+            to="/maps"
             className="px-3.5 py-1.5 rounded-xl bg-black text-white hover:bg-neutral-800 text-[10px] uppercase tracking-widest font-bold transition-all flex items-center gap-2 cursor-pointer shadow-2xs"
           >
             &larr; Studio Maps

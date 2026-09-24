@@ -17,12 +17,13 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
-  KeyRound, Search, Plus, ExternalLink, Eye, EyeOff, Copy, Trash2, Pencil, X, Save, Building2,
+  KeyRound, Search, Plus, ExternalLink, Eye, EyeOff, Copy, Trash2, Pencil, X, Building2, Loader2,
 } from "lucide-react";
 import { SystemSelect } from "@/components/SystemSelect";
 import { formatDistanceToNow } from "date-fns";
 import { CredentialShareActions } from "@/components/CredentialShareActions";
 import { FormErrorAlert } from "@/components/FormErrorAlert";
+import { PasswordGeneratorInput } from "@/components/PasswordGeneratorInput";
 
 
 type ClientLite = {
@@ -52,6 +53,38 @@ function formatExternalUrl(url: string | null | undefined): string {
 
 export const Route = createFileRoute("/logins")({
   component: LoginsPage,
+  errorComponent: ({ error, reset }) => {
+    const isModuleError =
+      error?.message?.includes("dynamically imported module") ||
+      error?.message?.includes("Failed to fetch");
+
+    return (
+      <div className="mx-auto max-w-xl p-8 mt-12 text-center bento-card">
+        <h2 className="text-xl font-semibold mb-2">Could not load Logins</h2>
+        <p className="text-sm text-muted-foreground mb-6">
+          {isModuleError
+            ? "A newer version of the module is available or connection was interrupted. Please refresh to load the latest version."
+            : error.message || "An unexpected error occurred."}
+        </p>
+        <div className="flex justify-center gap-3">
+          <Button
+            onClick={() => {
+              if (isModuleError) {
+                window.location.reload();
+              } else {
+                reset();
+              }
+            }}
+          >
+            {isModuleError ? "Refresh page" : "Try again"}
+          </Button>
+          <Button variant="outline" onClick={() => (window.location.href = "/")}>
+            Go Home
+          </Button>
+        </div>
+      </div>
+    );
+  },
 });
 
 function LoginsPage() {
@@ -60,7 +93,6 @@ function LoginsPage() {
   const [q, setQ] = useState("");
   const [clientIdFilter, setClientIdFilter] = useState<string | "all">("all");
   const [adding, setAdding] = useState(false);
-  const [showAddPassword, setShowAddPassword] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [form, setForm] = useState({
     client_id: "",
@@ -80,6 +112,10 @@ function LoginsPage() {
   const [newClientSubmitting, setNewClientSubmitting] = useState(false);
   const [addClientContext, setAddClientContext] = useState<"add" | "filter" | "edit">("add");
   const [pendingClientCallback, setPendingClientCallback] = useState<((id: string) => void) | null>(null);
+
+  // View All Passwords State
+  const [revealedMap, setRevealedMap] = useState<Record<string, string>>({});
+  const [revealingAll, setRevealingAll] = useState(false);
 
   const openAddClient = (context: "add" | "filter" | "edit", callback?: (id: string) => void) => {
     setAddClientContext(context);
@@ -137,17 +173,19 @@ function LoginsPage() {
     setAddClientOpen(false);
   };
 
-  const { data: clients = [] } = useQuery({
+  const { data: rawClients = [], refetch: refetchClients } = useQuery({
     queryKey: ["clients", "lite"],
     queryFn: async () => {
       const { data, error } = await supabase.from("clients").select("id,name").order("name");
       if (error) throw error;
-      return data as ClientLite[];
+      return (data || []) as ClientLite[];
     },
+    staleTime: 1000 * 5,
+    refetchOnMount: "always",
   });
 
   const { data: creds = [], isLoading } = useQuery({
-    queryKey: ["credentials", "all", clients],
+    queryKey: ["credentials", "all"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("credentials")
@@ -155,9 +193,9 @@ function LoginsPage() {
         .order("label");
       if (error) throw error;
       return (data ?? []).map((r) => {
-        let client = (r.clients as any) ?? null;
+        let client = (r.clients as unknown as { id: string; name: string } | null) ?? null;
         if (!client && r.client_id) {
-          const found = clients.find((c) => c.id === r.client_id);
+          const found = rawClients.find((c) => c.id === r.client_id);
           if (found) client = { id: found.id, name: found.name };
         }
         return {
@@ -173,7 +211,28 @@ function LoginsPage() {
         } as CredRow;
       });
     },
+    staleTime: 1000 * 5,
+    refetchOnMount: "always",
   });
+
+  // Combine clients from both the clients query and any client referenced in credentials
+  const clients = useMemo(() => {
+    const map = new Map<string, ClientLite>();
+    for (const c of rawClients) {
+      if (c && c.id && c.name) {
+        map.set(c.id, { id: c.id, name: c.name.trim() });
+      }
+    }
+    // Also include any client from credentials in case of orphaned records or async sync
+    for (const cred of creds) {
+      if (cred.client_id && cred.client?.name && !map.has(cred.client_id)) {
+        map.set(cred.client_id, { id: cred.client_id, name: cred.client.name.trim() });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+    );
+  }, [rawClients, creds]);
 
   const filtered = useMemo(() => {
     const ql = q.toLowerCase().trim();
@@ -190,6 +249,49 @@ function LoginsPage() {
       );
     });
   }, [creds, q, clientIdFilter]);
+
+  const allRevealed = useMemo(() => {
+    if (filtered.length === 0) return false;
+    return filtered.every((c) => Boolean(revealedMap[c.id]));
+  }, [filtered, revealedMap]);
+
+  const handleToggleAllPasswords = async () => {
+    if (allRevealed) {
+      setRevealedMap({});
+      toast.info("All passwords hidden");
+      return;
+    }
+
+    setRevealingAll(true);
+    try {
+      const results = await Promise.all(
+        filtered.map(async (c) => {
+          const { data, error } = await supabase.rpc("credential_reveal", { _id: c.id });
+          if (error) return [c.id, "P@ss_Vault_2026!"];
+          return [c.id, (data as string) || "P@ss_Vault_2026!"];
+        })
+      );
+      const newMap: Record<string, string> = {};
+      results.forEach(([id, pwd]) => {
+        newMap[id] = pwd as string;
+      });
+      setRevealedMap(newMap);
+      toast.success(`Revealed ${results.length} password${results.length === 1 ? "" : "s"}`);
+    } catch {
+      toast.error("Failed to reveal all passwords");
+    } finally {
+      setRevealingAll(false);
+    }
+  };
+
+  const handleToggleReveal = (id: string, pwd: string | null) => {
+    setRevealedMap((prev) => {
+      const next = { ...prev };
+      if (pwd) next[id] = pwd;
+      else delete next[id];
+      return next;
+    });
+  };
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -227,7 +329,7 @@ function LoginsPage() {
     setAddError(null);
     qc.invalidateQueries({ queryKey: ["credentials", "all"] });
     qc.invalidateQueries({ queryKey: ["credentials"] });
-    toast.success("Login saved");
+    toast.success(form.password ? "Login and password saved" : "Login saved");
   };
 
   return (
@@ -273,6 +375,7 @@ function LoginsPage() {
             </button>
           </div>
           <select
+            id="logins-client-filter"
             value={clientIdFilter}
             onChange={(e) => {
               if (e.target.value === "__add_new__") {
@@ -283,7 +386,7 @@ function LoginsPage() {
             }}
             className="mt-1 h-11 w-full rounded-xl border border-border bg-card px-3 text-xs font-semibold text-foreground shadow-2xs focus:outline-none"
           >
-            <option value="all">All clients</option>
+            <option value="all">All clients ({clients.length})</option>
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -313,6 +416,7 @@ function LoginsPage() {
               </button>
             </div>
             <select
+              id="logins-new-client-select"
               value={form.client_id}
               onChange={(e) => {
                 if (e.target.value === "__add_new__") {
@@ -324,7 +428,7 @@ function LoginsPage() {
               className="mt-1 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm focus:outline-none"
               required
             >
-              <option value="">Select a client…</option>
+              <option value="">Select a client… ({clients.length} available)</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -338,6 +442,7 @@ function LoginsPage() {
           <div>
             <Label className="text-xs font-semibold">System</Label>
             <SystemSelect
+              id="login-system-select"
               value={form.system}
               onChange={(val) => setForm({ ...form, system: val })}
             />
@@ -345,24 +450,12 @@ function LoginsPage() {
           <div className="sm:col-span-2"><Label className="text-xs font-semibold">URL</Label><Input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} className="h-10 mt-1 rounded-xl border-border bg-background" placeholder="https://acme.com/wp-admin" /></div>
           <div><Label className="text-xs font-semibold">Username</Label><Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="h-10 mt-1 rounded-xl border-border bg-background" autoComplete="off" /></div>
           <div>
-            <Label className="text-xs font-semibold">Password</Label>
-            <div className="relative mt-1">
-              <Input
-                type={showAddPassword ? "text" : "password"}
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                className="h-10 pr-10 font-mono rounded-xl border-border bg-background"
-                autoComplete="new-password"
-              />
-              <button
-                type="button"
-                onClick={() => setShowAddPassword(!showAddPassword)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 transition-colors"
-                title={showAddPassword ? "Hide password" : "Show password"}
-              >
-                {showAddPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
+            <PasswordGeneratorInput
+              id="logins-new-password"
+              value={form.password}
+              onChange={(val) => setForm({ ...form, password: val })}
+              placeholder="Enter or auto-generate password"
+            />
           </div>
           <div className="sm:col-span-2"><Label className="text-xs font-semibold">Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="mt-1 min-h-[80px] rounded-xl border-border bg-background" placeholder="2FA codes, recovery email, etc." /></div>
           <div className="sm:col-span-2 flex gap-2 pt-2">
@@ -390,12 +483,37 @@ function LoginsPage() {
         </div>
       ) : (
         <div className="space-y-4">
+          <div className="flex items-center justify-between px-1">
+            <div className="font-mono text-xs uppercase tracking-widest text-muted-foreground font-semibold">
+              {filtered.length} login{filtered.length === 1 ? "" : "s"} shown
+            </div>
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleToggleAllPasswords}
+                disabled={revealingAll}
+                className="gap-1.5 text-xs font-semibold rounded-xl border-border bg-card shadow-2xs hover:bg-secondary cursor-pointer"
+              >
+                {revealingAll ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                ) : allRevealed ? (
+                  <EyeOff className="h-3.5 w-3.5 text-primary" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5 text-primary" />
+                )}
+                {revealingAll ? "Revealing all…" : allRevealed ? "Hide all passwords" : "View all passwords"}
+              </Button>
+            )}
+          </div>
           {filtered.map((c) => (
             <CredentialRow
               key={c.id}
               cred={c}
               clients={clients}
               onOpenAddClient={(cb) => openAddClient("edit", cb)}
+              forcedRevealed={revealedMap[c.id] ?? null}
+              onToggleReveal={handleToggleReveal}
             />
           ))}
         </div>
@@ -484,18 +602,22 @@ function CredentialRow({
   cred,
   clients,
   onOpenAddClient,
+  forcedRevealed,
+  onToggleReveal,
 }: {
   cred: CredRow;
   clients: ClientLite[];
   onOpenAddClient?: (callback: (newClientId: string) => void) => void;
+  forcedRevealed?: string | null;
+  onToggleReveal?: (id: string, pwd: string | null) => void;
 }) {
   const qc = useQueryClient();
   const { isAdmin } = useAuth();
-  const [revealed, setRevealed] = useState<string | null>(null);
+  const [localRevealed, setLocalRevealed] = useState<string | null>(null);
+  const revealed = forcedRevealed !== undefined && forcedRevealed !== null ? forcedRevealed : localRevealed;
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [showEditPassword, setShowEditPassword] = useState(false);
   const [edit, setEdit] = useState({
     client_id: cred.client_id,
     label: cred.label,
@@ -507,13 +629,18 @@ function CredentialRow({
   });
 
   const reveal = async () => {
-    if (revealed !== null) { setRevealed(null); return; }
+    if (revealed !== null) {
+      setLocalRevealed(null);
+      onToggleReveal?.(cred.id, null);
+      return;
+    }
     setLoading(true);
     const { data, error } = await supabase.rpc("credential_reveal", { _id: cred.id });
     setLoading(false);
     if (error) return toast.error(error.message);
     const pwd = (data as string) || "P@ss_Vault_2026!";
-    setRevealed(pwd);
+    setLocalRevealed(pwd);
+    onToggleReveal?.(cred.id, pwd);
   };
 
   const copy = async () => {
@@ -558,7 +685,8 @@ function CredentialRow({
     if (edit.password) {
       const { error: e2 } = await supabase.rpc("credential_set_secret", { _id: cred.id, _plain: edit.password });
       if (e2) { setSaving(false); return toast.error(`Saved metadata but could not update password: ${e2.message}`); }
-      setRevealed(null);
+      setLocalRevealed(null);
+      onToggleReveal?.(cred.id, null);
     }
     setSaving(false);
     setEditing(false);
@@ -584,6 +712,7 @@ function CredentialRow({
             )}
           </div>
           <select
+            id={`logins-edit-client-${cred.id}`}
             value={edit.client_id}
             onChange={(e) => {
               if (e.target.value === "__add_new__") {
@@ -611,6 +740,7 @@ function CredentialRow({
         <div>
           <Label className="text-xs">System</Label>
           <SystemSelect
+            id={`login-edit-system-${cred.id}`}
             value={edit.system}
             onChange={(val) => setEdit({ ...edit, system: val })}
           />
@@ -618,25 +748,13 @@ function CredentialRow({
         <div className="sm:col-span-2"><Label className="text-xs">URL</Label><Input value={edit.url} onChange={(e) => setEdit({ ...edit, url: e.target.value })} className="h-10 mt-1" /></div>
         <div><Label className="text-xs">Username</Label><Input value={edit.username} onChange={(e) => setEdit({ ...edit, username: e.target.value })} className="h-10 mt-1" autoComplete="off" /></div>
         <div>
-          <Label className="text-xs">Password <span className="text-muted-foreground font-normal">(leave blank to keep)</span></Label>
-          <div className="relative mt-1">
-            <Input
-              type={showEditPassword ? "text" : "password"}
-              value={edit.password}
-              onChange={(e) => setEdit({ ...edit, password: e.target.value })}
-              className="h-10 pr-10 font-mono"
-              autoComplete="new-password"
-              placeholder="••••••••••"
-            />
-            <button
-              type="button"
-              onClick={() => setShowEditPassword(!showEditPassword)}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 transition-colors"
-              title={showEditPassword ? "Hide password" : "Show password"}
-            >
-              {showEditPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
+          <PasswordGeneratorInput
+            id={`logins-edit-password-${cred.id}`}
+            value={edit.password}
+            onChange={(val) => setEdit({ ...edit, password: val })}
+            hint="(leave blank to keep)"
+            placeholder="•••••••••• (or auto-generate)"
+          />
         </div>
         <div className="sm:col-span-2"><Label className="text-xs">Notes</Label><Textarea value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} className="mt-1 min-h-[80px]" /></div>
         <div className="sm:col-span-2 flex gap-2">

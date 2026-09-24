@@ -82,18 +82,32 @@ export function SystemSelect({
     );
   }
 
-  // Ensure current value is in option list if present
-  const allOptions = [...systems];
-  if (value && !allOptions.some((s) => s.toLowerCase() === value.toLowerCase())) {
-    allOptions.push(value);
-    allOptions.sort((a, b) => a.localeCompare(b));
+  // Determine matched option using case-insensitive check
+  const matchedSystem = systems.find(
+    (s) => s.toLowerCase() === (value || "").trim().toLowerCase()
+  );
+  const selectedValue = matchedSystem || value;
+
+  // Build unique options list
+  const uniqueMap = new Map<string, string>();
+  for (const sys of systems) {
+    if (sys && sys.trim()) {
+      uniqueMap.set(sys.trim().toLowerCase(), sys.trim());
+    }
   }
+  if (value && value.trim() && !uniqueMap.has(value.trim().toLowerCase())) {
+    uniqueMap.set(value.trim().toLowerCase(), value.trim());
+  }
+
+  const allOptions = Array.from(uniqueMap.values()).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" })
+  );
 
   return (
     <div className="relative mt-1">
       <select
         id={id}
-        value={value}
+        value={selectedValue}
         onChange={handleSelectChange}
         className={`h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring ${className}`}
       >

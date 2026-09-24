@@ -3,6 +3,7 @@ import type { ProjectQuoteResult } from "./quote.functions";
 export interface StoredQuoteRecord {
   projectId: string;
   scopeText: string;
+  pdfFileName?: string;
   result: ProjectQuoteResult;
   originalResult?: ProjectQuoteResult;
   isCustomized: boolean;
@@ -28,13 +29,15 @@ export function saveQuoteRecord(
   scopeText: string,
   result: ProjectQuoteResult,
   originalResult?: ProjectQuoteResult,
-  isCustomized: boolean = false
+  isCustomized: boolean = false,
+  pdfFileName?: string,
 ): StoredQuoteRecord | null {
   if (typeof window === "undefined" || !projectId) return null;
   try {
     const record: StoredQuoteRecord = {
       projectId,
       scopeText,
+      pdfFileName,
       result,
       originalResult: originalResult || result,
       isCustomized,

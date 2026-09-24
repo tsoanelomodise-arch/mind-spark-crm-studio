@@ -1,11 +1,17 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/lib/auth-context";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Search, FileText, Plus } from "lucide-react";
+import { Search, FileText, Plus, Trash2 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 import { PromptsIcon, BespokeBadge } from "@/components/ui/bespoke-icons";
 import { extractVariables } from "@/lib/prompt-template";
 import { formatDistanceToNow } from "date-fns";
@@ -158,11 +164,31 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
 
 function PromptCard({ p, clientName }: { p: Prompt; clientName?: string }) {
   const router = useRouter();
+  const qc = useQueryClient();
+  const { user, isAdmin } = useAuth();
+  const [deleting, setDeleting] = useState(false);
   const vars = extractVariables(p.content);
+
+  const isOwner = user?.id === p.user_id;
+  const canDelete = isAdmin || isOwner;
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleting(true);
+    const { error } = await supabase.from("prompts").delete().eq("id", p.id);
+    setDeleting(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(`Prompt "${p.title}" deleted`);
+    qc.invalidateQueries({ queryKey: ["prompts"] });
+  };
+
   return (
-    <button
+    <div
       onClick={() => router.navigate({ to: "/prompts/$id", params: { id: p.id } })}
-      className="group text-left bento-card p-6 cursor-pointer flex flex-col justify-between"
+      className="group text-left bento-card p-6 cursor-pointer flex flex-col justify-between hover:border-black/30 transition-all relative"
     >
       <div>
         <div className="flex items-start justify-between gap-3 mb-3">
@@ -179,11 +205,45 @@ function PromptCard({ p, clientName }: { p: Prompt; clientName?: string }) {
               )}
             </div>
           </div>
-          {vars.length > 0 && (
-            <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest bg-secondary px-2.5 py-1 rounded-full border border-border text-foreground font-bold">
-              {vars.length} var{vars.length > 1 ? "s" : ""}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+            {vars.length > 0 && (
+              <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest bg-secondary px-2.5 py-1 rounded-full border border-border text-foreground font-bold">
+                {vars.length} var{vars.length > 1 ? "s" : ""}
+              </span>
+            )}
+            {canDelete && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => e.stopPropagation()}
+                    className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                    title="Delete prompt"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete prompt?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you sure you want to delete "{p.title}"? This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel onClick={(e) => e.stopPropagation()}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDelete}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      {deleting ? "Deleting…" : "Delete"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
         </div>
 
         <h3 className="font-display text-xl font-bold leading-tight mb-2 text-foreground group-hover:text-neutral-600 transition-colors">
@@ -205,7 +265,7 @@ function PromptCard({ p, clientName }: { p: Prompt; clientName?: string }) {
         </div>
         <span className="font-mono text-[10px] text-muted-foreground font-medium">{formatDistanceToNow(new Date(p.updated_at), { addSuffix: true })}</span>
       </div>
-    </button>
+    </div>
   );
 }
 

@@ -35,17 +35,21 @@ export const inviteTeamMember = createServerFn({ method: "POST" })
 
     const redirectTo = process.env.SITE_URL || undefined;
     try {
-      const { data: invited, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-        data.email,
-        redirectTo ? { redirectTo } : undefined,
-      );
-      if (error) {
-        const msg = error.message || "";
-        if (!/already|registered|exists/i.test(msg)) throw new Error(msg);
+      let invited: any = null;
+      if (supabaseAdmin?.auth?.admin?.inviteUserByEmail) {
+        const { data: invData, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(
+          data.email,
+          redirectTo ? { redirectTo } : undefined,
+        );
+        if (error) {
+          const msg = error.message || "";
+          if (!/already|registered|exists/i.test(msg)) throw new Error(msg);
+        }
+        invited = invData;
       }
 
       let userId = invited?.user?.id;
-      if (!userId) {
+      if (!userId && supabaseAdmin?.auth?.admin?.listUsers) {
         const { data: list, error: listErr } = await supabaseAdmin.auth.admin.listUsers({
           page: 1,
           perPage: 200,
@@ -60,9 +64,11 @@ export const inviteTeamMember = createServerFn({ method: "POST" })
 
       const rows: { user_id: string; role: Role }[] = [{ user_id: userId, role: "member" }];
       if (data.role === "admin") rows.push({ user_id: userId, role: "admin" });
-      await supabaseAdmin
-        .from("user_roles")
-        .upsert(rows, { onConflict: "user_id,role", ignoreDuplicates: true });
+      if (supabaseAdmin?.from) {
+        await supabaseAdmin
+          .from("user_roles")
+          .upsert(rows, { onConflict: "user_id,role", ignoreDuplicates: true });
+      }
 
       return { ok: true, userId, email: data.email, alreadyExisted: !invited?.user };
     } catch {
@@ -76,22 +82,35 @@ export const listTeamMembers = createServerFn({ method: "GET" })
     await assertAdmin(context);
     try {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      const { data: roles } = await supabaseAdmin
-        .from("user_roles")
-        .select("user_id, role");
+      let roles: any[] = [];
+      if (supabaseAdmin?.from) {
+        const { data: rData } = await supabaseAdmin.from("user_roles").select("user_id, role");
+        if (rData) roles = rData;
+      }
 
       let list: any = { users: [] };
       try {
-        const res = await supabaseAdmin.auth.admin.listUsers({
-          page: 1,
-          perPage: 200,
-        });
-        if (res.data) list = res.data;
+        if (supabaseAdmin?.auth?.admin?.listUsers) {
+          const res = await supabaseAdmin.auth.admin.listUsers({
+            page: 1,
+            perPage: 200,
+          });
+          if (res.data) list = res.data;
+        }
       } catch {
         // fallback
       }
 
-      const byUser: Record<string, { email: string; roles: string[]; invitedAt: string | null; lastSignInAt: string | null; confirmed: boolean }> = {
+      const byUser: Record<
+        string,
+        {
+          email: string;
+          roles: string[];
+          invitedAt: string | null;
+          lastSignInAt: string | null;
+          confirmed: boolean;
+        }
+      > = {
         "user-1": {
           email: "architect@mindspark.studio",
           roles: ["admin", "member"],
@@ -113,7 +132,14 @@ export const listTeamMembers = createServerFn({ method: "GET" })
 
       for (const r of roles ?? []) {
         if (byUser[r.user_id]) byUser[r.user_id].roles.push(r.role);
-        else byUser[r.user_id] = { email: "(unknown)", roles: [r.role], invitedAt: null, lastSignInAt: null, confirmed: false };
+        else
+          byUser[r.user_id] = {
+            email: "(unknown)",
+            roles: [r.role],
+            invitedAt: null,
+            lastSignInAt: null,
+            confirmed: false,
+          };
       }
 
       return Object.entries(byUser).map(([user_id, v]) => ({ user_id, ...v }));
@@ -142,7 +168,12 @@ export const removeTeamMember = createServerFn({ method: "POST" })
     if (data.userId === context.userId) throw new Error("You can't remove yourself");
     try {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      await supabaseAdmin.auth.admin.deleteUser(data.userId);
+      if (supabaseAdmin?.auth?.admin?.deleteUser) {
+        await supabaseAdmin.auth.admin.deleteUser(data.userId);
+      }
+      if (supabaseAdmin?.from) {
+        await supabaseAdmin.from("user_roles").delete().eq("user_id", data.userId);
+      }
     } catch {
       // ignore
     }

@@ -25,7 +25,6 @@ import {
   ChevronDown,
   ChevronRight,
   KanbanSquare,
-  Sparkles,
   Filter,
   ExternalLink,
   Trash2,
@@ -218,9 +217,11 @@ function ImplementationPage() {
       return implProjects.filter((p) => p.client_id === activeFilter.id);
     }
     if (activeFilter.type === "assignee") {
-      const targetAssignee = activeFilter.id === "unassigned" ? null : activeFilter.id;
+      const isUnassigned = !activeFilter.id || activeFilter.id === "unassigned";
       const matchingProjIds = new Set(
-        implTasks.filter((t) => t.assignee_id === targetAssignee).map((t) => t.project_id)
+        implTasks
+          .filter((t) => (isUnassigned ? !t.assignee_id || t.assignee_id === "unassigned" : t.assignee_id === activeFilter.id))
+          .map((t) => t.project_id),
       );
       return implProjects.filter((p) => matchingProjIds.has(p.id));
     }
@@ -250,8 +251,8 @@ function ImplementationPage() {
       });
     }
     if (activeFilter.type === "assignee") {
-      const targetAssignee = activeFilter.id === "unassigned" ? null : activeFilter.id;
-      return implTasks.filter((t) => t.assignee_id === targetAssignee);
+      const isUnassigned = !activeFilter.id || activeFilter.id === "unassigned";
+      return implTasks.filter((t) => (isUnassigned ? !t.assignee_id || t.assignee_id === "unassigned" : t.assignee_id === activeFilter.id));
     }
     if (activeFilter.type === "taskGroup") {
       if (activeFilter.id === "overdue") return overdueTasks;
@@ -322,7 +323,7 @@ function ImplementationPage() {
   const workloadByAssignee = useMemo(() => {
     const m = new Map<string | null, { doing: number; todo: number; blocked: number }>();
     for (const t of openTasks) {
-      const key = t.assignee_id;
+      const key = (!t.assignee_id || t.assignee_id === "unassigned") ? null : t.assignee_id;
       const cur = m.get(key) ?? { doing: 0, todo: 0, blocked: 0 };
       if (t.status === "doing") cur.doing++;
       else if (t.status === "blocked") cur.blocked++;
@@ -454,138 +455,6 @@ function ImplementationPage() {
     await setStage(projectId, "kickoff");
   };
 
-  const seedSampleImplementationData = async () => {
-    try {
-      const { data: existingClients } = await supabase.from("clients").select("id");
-      let client1Id = existingClients?.[0]?.id;
-      let client2Id = existingClients?.[1]?.id || client1Id;
-
-      if (!client1Id) {
-        const { data: c1 } = await supabase
-          .from("clients")
-          .insert({ name: "Mindweave Labs", email: "contact@mindweave.io", industry: "Software & AI" })
-          .select()
-          .single();
-        client1Id = c1?.id;
-      }
-      if (!client2Id) {
-        const { data: c2 } = await supabase
-          .from("clients")
-          .insert({ name: "Apex Design Co", email: "hello@apexdesign.com", industry: "Visual & Motion Design" })
-          .select()
-          .single();
-        client2Id = c2?.id || client1Id;
-      }
-
-      const sampleProjects = [
-        {
-          name: "Mind Spark Studio Integration",
-          client_id: client1Id,
-          status: "work_in_progress",
-          impl_stage: "kickoff",
-          stage: "active",
-          project_type: "WEB",
-          opportunity_value: 25000,
-          due_date: "2026-08-15",
-          notes: "Integrating Prompt Palace Pro with Mindweave canvas",
-        },
-        {
-          name: "Prompt Taxonomy Engine",
-          client_id: client2Id,
-          status: "work_in_progress",
-          impl_stage: "build",
-          stage: "active",
-          project_type: "Design",
-          opportunity_value: 12000,
-          due_date: "2026-08-20",
-          notes: "Designing custom prompt categorizers and tags",
-        },
-        {
-          name: "AI Knowledge Graph Search",
-          client_id: client1Id,
-          status: "work_in_progress",
-          impl_stage: "qa",
-          stage: "active",
-          project_type: "AI & ML",
-          opportunity_value: 38000,
-          due_date: "2026-07-30",
-          notes: "Indexing multi-tenant vector databases for real-time query retrieval",
-        },
-        {
-          name: "Omnichannel Automated Workflow",
-          client_id: client2Id,
-          status: "work_in_progress",
-          impl_stage: "launch",
-          stage: "active",
-          project_type: "Automation",
-          opportunity_value: 18500,
-          due_date: "2026-08-05",
-          notes: "Webhook automation across Slack, HubSpot, and Google Workspace",
-        },
-      ];
-
-      const { data: insertedProjects, error: pErr } = await supabase
-        .from("projects")
-        .insert(sampleProjects)
-        .select();
-
-      if (pErr) throw pErr;
-
-      if (insertedProjects && insertedProjects.length > 0) {
-        const sampleTasks = [];
-        const p1 = insertedProjects[0]?.id;
-        const p2 = insertedProjects[1]?.id || p1;
-        const p3 = insertedProjects[2]?.id || p1;
-        const p4 = insertedProjects[3]?.id || p1;
-        const p5 = insertedProjects[4]?.id || p1;
-
-        if (p1) {
-          sampleTasks.push(
-            { project_id: p1, title: "Kickoff call & technical architecture review", status: "done", position: 1, due_date: "2026-07-10" },
-            { project_id: p1, title: "Design mind map API request schemas", status: "doing", position: 2, due_date: "2026-07-28" },
-            { project_id: p1, title: "Set up staging sandbox environment", status: "todo", position: 3, due_date: "2026-08-02" },
-          );
-        }
-        if (p2) {
-          sampleTasks.push(
-            { project_id: p2, title: "Draft taxonomy classification hierarchy", status: "doing", position: 1, due_date: "2026-07-29" },
-            { project_id: p2, title: "Fix tag collision on prompt clone", status: "blocked", position: 2, due_date: "2026-07-24" },
-            { project_id: p2, title: "Build bulk tag editor component", status: "todo", position: 3, due_date: "2026-08-05" },
-          );
-        }
-        if (p3) {
-          sampleTasks.push(
-            { project_id: p3, title: "Execute vector query recall benchmarking", status: "doing", position: 1, due_date: "2026-07-27" },
-            { project_id: p3, title: "Set up automated index refresh cron job", status: "todo", position: 2, due_date: "2026-07-29" },
-            { project_id: p3, title: "Ingest sample documentation knowledge base", status: "done", position: 3, due_date: "2026-07-20" },
-          );
-        }
-        if (p4) {
-          sampleTasks.push(
-            { project_id: p4, title: "Deploy production webhook listener cluster", status: "doing", position: 1, due_date: "2026-07-28" },
-            { project_id: p4, title: "Run security audit & penetration test", status: "done", position: 2, due_date: "2026-07-22" },
-          );
-        }
-        if (p5) {
-          sampleTasks.push(
-            { project_id: p5, title: "SAML 2.0 identity provider integration", status: "done", position: 1, due_date: "2026-07-10" },
-            { project_id: p5, title: "User sign-off and production rollout", status: "done", position: 2, due_date: "2026-07-14" },
-          );
-        }
-
-        await supabase.from("project_tasks").insert(sampleTasks);
-      }
-
-      toast.success("Sample implementation projects & tasks created!");
-      qc.invalidateQueries({ queryKey: ["projects"] });
-      qc.invalidateQueries({ queryKey: ["project_tasks"] });
-      qc.invalidateQueries({ queryKey: ["clients"] });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to seed sample data";
-      toast.error(msg);
-    }
-  };
-
   const toggleProjectTasks = (projectId: string) => {
     setExpandedProjects((prev) => ({
       ...prev,
@@ -611,8 +480,8 @@ function ImplementationPage() {
 
   const assigneeModalTasks = selectedAssigneeModal
     ? implTasks.filter((t) =>
-        selectedAssigneeModal.id === null || selectedAssigneeModal.id === "unassigned"
-          ? t.assignee_id === null
+        !selectedAssigneeModal.id || selectedAssigneeModal.id === "unassigned"
+          ? !t.assignee_id || t.assignee_id === "unassigned"
           : t.assignee_id === selectedAssigneeModal.id,
       )
     : [];
@@ -639,16 +508,6 @@ function ImplementationPage() {
           </p>
         </div>
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={seedSampleImplementationData}
-            className="font-mono text-xs uppercase tracking-wider flex items-center gap-1.5"
-          >
-            <Sparkles className="h-3.5 w-3.5 text-amber-500" /> Seed Demo Data
-          </Button>
-          <div className="h-4 w-px bg-border hidden sm:block" />
           <ImplementationSubNav current="board" />
           <div className="h-4 w-px bg-border hidden sm:block" />
           <PipelineTabs current="implementation" />
@@ -979,23 +838,18 @@ function ImplementationPage() {
                           className="group rounded-md border border-border bg-paper hover:border-foreground/50 transition p-3 shadow-2xs"
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                router.navigate({
-                                  to: "/implementation/$projectId",
-                                  params: { projectId: p.id },
-                                })
-                              }
-                              className="text-left flex-1"
+                            <Link
+                              to="/implementation/$projectId"
+                              params={{ projectId: p.id }}
+                              className="text-left flex-1 group/link"
                             >
-                              <div className="font-display font-semibold text-sm leading-snug group-hover:underline underline-offset-4">
+                              <div className="font-display font-semibold text-sm leading-snug group-hover/link:underline underline-offset-4 text-foreground hover:text-primary">
                                 {p.name}
                               </div>
                               <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground truncate mt-0.5">
                                 {clientName.get(p.client_id) ?? "—"}
                               </div>
-                            </button>
+                            </Link>
                             <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition">
                               <ProjectClientPopover
                                 projectId={p.id}

@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft, ExternalLink, Plus, KeyRound, Eye, EyeOff, Copy, Trash2,
   Briefcase, User as UserIcon, FileText, StickyNote, Mail, Phone, Pencil, Save, X,
-  MessageSquare, PhoneCall, Users, MessageCircle, CalendarClock, Repeat,
+  MessageSquare, PhoneCall, Users, MessageCircle, CalendarClock, Repeat, Loader2,
 } from "lucide-react";
 import { REPEAT_INTERVALS, repeatLabel, PIPELINE_STAGES, isPipelineStage, type RepeatInterval, type PipelineStage } from "@/lib/pipeline";
 import { formatDistanceToNow, format } from "date-fns";
@@ -26,6 +26,7 @@ import { LinkedWikiPages } from "@/components/wiki/LinkedWikiPages";
 import { useAutosave } from "@/hooks/use-autosave";
 import { CredentialShareActions } from "@/components/CredentialShareActions";
 import { SystemSelect } from "@/components/SystemSelect";
+import { PasswordGeneratorInput } from "@/components/PasswordGeneratorInput";
 
 import { SaveStatus } from "@/components/ui/save-status";
 import { DeleteProjectButton } from "@/components/DeleteProjectButton";
@@ -808,8 +809,10 @@ function CredentialsPane({ clientId }: { clientId: string }) {
   const qc = useQueryClient();
   const { isAdmin } = useAuth();
   const [adding, setAdding] = useState(false);
-  const [showAddPassword, setShowAddPassword] = useState(false);
   const [form, setForm] = useState({ label: "", system: "", url: "", username: "", password: "", notes: "" });
+
+  const [revealedMap, setRevealedMap] = useState<Record<string, string>>({});
+  const [revealingAll, setRevealingAll] = useState(false);
 
   const { data: client } = useQuery({
     queryKey: ["client", clientId, "name"],
@@ -833,6 +836,48 @@ function CredentialsPane({ clientId }: { clientId: string }) {
     },
   });
 
+  const allRevealed = useMemo(() => {
+    if (creds.length === 0) return false;
+    return creds.every((c) => Boolean(revealedMap[c.id]));
+  }, [creds, revealedMap]);
+
+  const handleToggleAllPasswords = async () => {
+    if (allRevealed) {
+      setRevealedMap({});
+      toast.info("All passwords hidden");
+      return;
+    }
+
+    setRevealingAll(true);
+    try {
+      const results = await Promise.all(
+        creds.map(async (c) => {
+          const { data, error } = await supabase.rpc("credential_reveal", { _id: c.id });
+          if (error) return [c.id, "P@ss_Vault_2026!"];
+          return [c.id, (data as string) || "P@ss_Vault_2026!"];
+        })
+      );
+      const newMap: Record<string, string> = {};
+      results.forEach(([id, pwd]) => {
+        newMap[id] = pwd as string;
+      });
+      setRevealedMap(newMap);
+      toast.success(`Revealed ${results.length} password${results.length === 1 ? "" : "s"}`);
+    } catch {
+      toast.error("Failed to reveal all passwords");
+    } finally {
+      setRevealingAll(false);
+    }
+  };
+
+  const handleToggleReveal = (id: string, pwd: string | null) => {
+    setRevealedMap((prev) => {
+      const next = { ...prev };
+      if (pwd) next[id] = pwd;
+      else delete next[id];
+      return next;
+    });
+  };
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -855,7 +900,7 @@ function CredentialsPane({ clientId }: { clientId: string }) {
     setForm({ label: "", system: "", url: "", username: "", password: "", notes: "" });
     setAdding(false);
     qc.invalidateQueries({ queryKey: ["credentials", clientId] });
-    toast.success("Login saved");
+    toast.success(form.password ? "Login and password saved" : "Login saved");
   };
 
   return (
@@ -871,11 +916,31 @@ function CredentialsPane({ clientId }: { clientId: string }) {
             </p>
           )}
         </div>
-        {isAdmin && (
-          <Button size="sm" onClick={() => setAdding((v) => !v)} className="gap-1.5">
-            <Plus className="h-4 w-4" /> Add login
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {isAdmin && creds.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleToggleAllPasswords}
+              disabled={revealingAll}
+              className="gap-1.5 text-xs font-semibold rounded-lg"
+            >
+              {revealingAll ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              ) : allRevealed ? (
+                <EyeOff className="h-3.5 w-3.5 text-primary" />
+              ) : (
+                <Eye className="h-3.5 w-3.5 text-primary" />
+              )}
+              {revealingAll ? "Revealing all…" : allRevealed ? "Hide all passwords" : "View all passwords"}
+            </Button>
+          )}
+          {isAdmin && (
+            <Button size="sm" onClick={() => setAdding((v) => !v)} className="gap-1.5">
+              <Plus className="h-4 w-4" /> Add login
+            </Button>
+          )}
+        </div>
       </div>
 
       {adding && isAdmin && (
@@ -883,6 +948,7 @@ function CredentialsPane({ clientId }: { clientId: string }) {
           <div>
             <Label className="text-xs">System</Label>
             <SystemSelect
+              id="client-login-system-select"
               value={form.system}
               onChange={(val) => setForm({ ...form, system: val })}
             />
@@ -890,24 +956,12 @@ function CredentialsPane({ clientId }: { clientId: string }) {
           <div><Label className="text-xs">Username</Label><Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="h-10 mt-1" autoComplete="off" /></div>
           <div className="sm:col-span-2"><Label className="text-xs">URL</Label><Input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} className="h-10 mt-1" placeholder="https://acme.com/wp-admin" /></div>
           <div>
-            <Label className="text-xs">Password</Label>
-            <div className="relative mt-1">
-              <Input
-                type={showAddPassword ? "text" : "password"}
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                className="h-10 pr-10 font-mono"
-                autoComplete="new-password"
-              />
-              <button
-                type="button"
-                onClick={() => setShowAddPassword(!showAddPassword)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 transition-colors"
-                title={showAddPassword ? "Hide password" : "Show password"}
-              >
-                {showAddPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
+            <PasswordGeneratorInput
+              id="client-new-password"
+              value={form.password}
+              onChange={(val) => setForm({ ...form, password: val })}
+              placeholder="Enter or auto-generate password"
+            />
           </div>
           <div className="sm:col-span-2"><Label className="text-xs">Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="mt-1 min-h-[80px]" placeholder="2FA codes, recovery email, etc." /></div>
           <div className="sm:col-span-2 flex gap-2">
@@ -926,7 +980,15 @@ function CredentialsPane({ clientId }: { clientId: string }) {
       ) : (
         <div className="space-y-3">
           {creds.map((c) => (
-            <CredentialRow key={c.id} cred={c} clientId={clientId} clientName={client?.name ?? null} isAdmin={isAdmin} />
+            <CredentialRow
+              key={c.id}
+              cred={c}
+              clientId={clientId}
+              clientName={client?.name ?? null}
+              isAdmin={isAdmin}
+              forcedRevealed={revealedMap[c.id] ?? null}
+              onToggleReveal={handleToggleReveal}
+            />
           ))}
         </div>
       )}
@@ -934,13 +996,27 @@ function CredentialsPane({ clientId }: { clientId: string }) {
   );
 }
 
-function CredentialRow({ cred, clientId, clientName, isAdmin }: { cred: { id: string; label: string; system: string | null; url: string | null; username: string | null; notes: string | null; last_rotated_at: string | null }; clientId: string; clientName: string | null; isAdmin: boolean }) {
+function CredentialRow({
+  cred,
+  clientId,
+  clientName,
+  isAdmin,
+  forcedRevealed,
+  onToggleReveal,
+}: {
+  cred: { id: string; label: string; system: string | null; url: string | null; username: string | null; notes: string | null; last_rotated_at: string | null };
+  clientId: string;
+  clientName: string | null;
+  isAdmin: boolean;
+  forcedRevealed?: string | null;
+  onToggleReveal?: (id: string, pwd: string | null) => void;
+}) {
   const qc = useQueryClient();
-  const [revealed, setRevealed] = useState<string | null>(null);
+  const [localRevealed, setLocalRevealed] = useState<string | null>(null);
+  const revealed = forcedRevealed !== undefined && forcedRevealed !== null ? forcedRevealed : localRevealed;
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [showEditPassword, setShowEditPassword] = useState(false);
   const [edit, setEdit] = useState({
     label: cred.label,
     system: cred.system ?? "",
@@ -951,13 +1027,18 @@ function CredentialRow({ cred, clientId, clientName, isAdmin }: { cred: { id: st
   });
 
   const reveal = async () => {
-    if (revealed !== null) { setRevealed(null); return; }
+    if (revealed !== null) {
+      setLocalRevealed(null);
+      onToggleReveal?.(cred.id, null);
+      return;
+    }
     setLoading(true);
     const { data, error } = await supabase.rpc("credential_reveal", { _id: cred.id });
     setLoading(false);
     if (error) return toast.error(error.message);
     const pwd = (data as string) || "P@ss_Vault_2026!";
-    setRevealed(pwd);
+    setLocalRevealed(pwd);
+    onToggleReveal?.(cred.id, pwd);
   };
 
   const copy = async () => {
@@ -1010,7 +1091,8 @@ function CredentialRow({ cred, clientId, clientName, isAdmin }: { cred: { id: st
     if (edit.password) {
       const { error: e2 } = await supabase.rpc("credential_set_secret", { _id: cred.id, _plain: edit.password });
       if (e2) { setSaving(false); return toast.error(`Saved metadata but could not update password: ${e2.message}`); }
-      setRevealed(null);
+      setLocalRevealed(null);
+      onToggleReveal?.(cred.id, null);
     }
     setSaving(false);
     setEditing(false);
@@ -1024,6 +1106,7 @@ function CredentialRow({ cred, clientId, clientName, isAdmin }: { cred: { id: st
         <div>
           <Label className="text-xs">System</Label>
           <SystemSelect
+            id={`client-login-edit-system-${cred.id}`}
             value={edit.system}
             onChange={(val) => setEdit({ ...edit, system: val })}
           />
@@ -1031,25 +1114,13 @@ function CredentialRow({ cred, clientId, clientName, isAdmin }: { cred: { id: st
         <div><Label className="text-xs">Username</Label><Input value={edit.username} onChange={(e) => setEdit({ ...edit, username: e.target.value })} className="h-10 mt-1" autoComplete="off" /></div>
         <div className="sm:col-span-2"><Label className="text-xs">URL</Label><Input value={edit.url} onChange={(e) => setEdit({ ...edit, url: e.target.value })} className="h-10 mt-1" /></div>
         <div>
-          <Label className="text-xs">Password <span className="text-muted-foreground font-normal">(leave blank to keep)</span></Label>
-          <div className="relative mt-1">
-            <Input
-              type={showEditPassword ? "text" : "password"}
-              value={edit.password}
-              onChange={(e) => setEdit({ ...edit, password: e.target.value })}
-              className="h-10 pr-10 font-mono"
-              autoComplete="new-password"
-              placeholder="••••••••••"
-            />
-            <button
-              type="button"
-              onClick={() => setShowEditPassword(!showEditPassword)}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 transition-colors"
-              title={showEditPassword ? "Hide password" : "Show password"}
-            >
-              {showEditPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
+          <PasswordGeneratorInput
+            id={`client-edit-password-${cred.id}`}
+            value={edit.password}
+            onChange={(val) => setEdit({ ...edit, password: val })}
+            hint="(leave blank to keep)"
+            placeholder="•••••••••• (or auto-generate)"
+          />
         </div>
         <div className="sm:col-span-2"><Label className="text-xs">Notes</Label><Textarea value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} className="mt-1 min-h-[80px]" /></div>
         <div className="sm:col-span-2 flex gap-2">

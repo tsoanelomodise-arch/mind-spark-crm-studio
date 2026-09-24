@@ -251,10 +251,10 @@ graph TD
   - **Credential Reveal RPC Mock Handler (`src/integrations/supabase/client.ts`)**: Fixed `credential_reveal` mock function so it always returns or generates a valid secret string for any credential (including newly created ones) rather than returning an empty string that triggered a "No password stored" error.
   - **Password Visibility Toggles on Forms (`src/routes/logins.tsx`, `src/routes/clients.$clientId.tsx`)**: Added interactive `Eye` / `EyeOff` toggle buttons to all password input fields (Add Login and Edit Login forms) so users can toggle between obscured and plain-text modes while typing passwords.
   - **Stored Credential Reveal Action**: Updated `reveal` and `copy` button handlers to seamlessly toggle revealed password state and allow instant copying without erroring on empty responses.
-- **Prompts Reinstatement & Mock DB Sync (`src/integrations/supabase/client.ts`)**:
-  - **Auto-Reseed & Merge Logic (`getMockStorage`)**: Updated local storage initialization so that if `parsed.prompts` is empty or missing any of the default seed prompts, they are automatically merged into `localStorage` without overwriting user-created prompts.
-  - **Expanded Seed Prompts Suite**: Reinstated and expanded the default prompt collection with 6 comprehensive agency templates (*Mind Map Concept Expansion*, *Process Flow Spec Generator*, *System Refactoring Assistant*, *Client Onboarding Discovery Brief*, *AI Project Quote & Scope Estimator*, and *Weekly CRM & Pipeline Summarizer*).
-  - **Query Builder Filter Resolution (`createMockQuery`)**: Implemented full multi-clause `.or(...)` filter evaluation in mock mode to ensure prompt searches and cross-entity reference lookups work accurately across titles, descriptions, and tags.
+- **Prompt Library Landing Page Delete Feature (`src/routes/prompts.index.tsx`)**:
+  - **Inline Prompt Card Deletion**: Added a delete action button (`Trash2` icon) directly on each prompt card in "The Library" landing page (`/prompts`).
+  - **Confirmation Dialog**: Wrapped deletion in a styled `AlertDialog` modal to prevent accidental deletions.
+  - **Event Isolation & Cache Invalidation**: Used `e.stopPropagation()` on card actions to prevent navigating to prompt details when opening the dialog or deleting, and invalidated the `prompts` query cache for immediate UI updates.
 
 
 

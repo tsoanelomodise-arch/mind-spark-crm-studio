@@ -1,4 +1,5 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,6 +26,7 @@ const schema = z.object({
 
 function NewClient() {
   const router = useRouter();
+  const qc = useQueryClient();
   const { user } = useAuth();
   const [form, setForm] = useState({
     name: "",
@@ -67,6 +69,8 @@ function NewClient() {
       return;
     }
     toast.success("Client added");
+    qc.invalidateQueries({ queryKey: ["clients"] });
+    qc.invalidateQueries({ queryKey: ["clients", "lite"] });
     router.navigate({ to: "/clients/$clientId", params: { clientId: data.id } });
   };
 

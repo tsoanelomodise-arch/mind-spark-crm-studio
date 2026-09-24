@@ -1,438 +1,26 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
+import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import { db as firestoreDb, handleFirestoreError, OperationType } from "@/lib/firebase";
 
 // Default seed data for local fallback when Supabase credentials are not provided
 const INITIAL_MOCK_DB: Record<string, any[]> = {
-  prompts: [
-    {
-      id: "prompt-1",
-      title: "Mind Map Concept Expansion",
-      description: "Generates structured sub-topics and branch ideas for any mind map node.",
-      content: "You are a creative strategist. Given the core concept {{concept}}, break it down into 5 distinct sub-branches with actionable bullet points:\n\n1. Branch 1\n2. Branch 2\n3. Branch 3\n4. Branch 4\n5. Branch 5",
-      category: "Ideation",
-      tags: ["mindmap", "brainstorming", "creative"],
-      updated_at: new Date().toISOString(),
-      user_id: "user-1",
-      client_id: "client-1",
-    },
-    {
-      id: "prompt-2",
-      title: "Process Flow Spec Generator",
-      description: "Creates comprehensive Markdown Process Flow specs with Mermaid diagrams.",
-      content: "Analyze the system architecture for {{app_name}} and generate an Interactive Markdown Process Flow Spec with system routes, mermaid diagrams, and change logs.",
-      category: "Documentation",
-      tags: ["spec", "process-flow", "markdown"],
-      updated_at: new Date().toISOString(),
-      user_id: "user-1",
-      client_id: "client-1",
-    },
-    {
-      id: "prompt-3",
-      title: "System Refactoring Assistant",
-      description: "Optimizes component architecture, state management, and typescript types.",
-      content: "Review the code snippet below and optimize for performance, clarity, and type safety:\n\n```typescript\n{{code}}\n```",
-      category: "Engineering",
-      tags: ["typescript", "refactoring", "code"],
-      updated_at: new Date().toISOString(),
-      user_id: "user-1",
-      client_id: null,
-    },
-    {
-      id: "prompt-4",
-      title: "Client Onboarding Discovery Brief",
-      description: "Extracts scope, goals, technical requirements, and risks from kick-off notes.",
-      content: "Review the meeting notes for {{client_name}} below and produce a structured Onboarding Brief containing:\n- Core Business Objectives\n- Technical Stack & Integrations\n- Key Stakeholders\n- Primary Risks & Mitigations\n\nNotes:\n{{notes}}",
-      category: "Strategy",
-      tags: ["onboarding", "client", "discovery"],
-      updated_at: new Date().toISOString(),
-      user_id: "user-1",
-      client_id: "client-1",
-    },
-    {
-      id: "prompt-5",
-      title: "AI Project Quote & Scope Estimator",
-      description: "Drafts line-item cost and timeline estimates based on project deliverables.",
-      content: "Create a formal project quote for {{project_name}} given budget target {{budget}} and completion target {{completion_date}}. Break down phases, deliverables, and assumptions.",
-      category: "Sales",
-      tags: ["quote", "estimate", "pricing"],
-      updated_at: new Date().toISOString(),
-      user_id: "user-1",
-      client_id: "client-2",
-    },
-    {
-      id: "prompt-6",
-      title: "Weekly CRM & Pipeline Summarizer",
-      description: "Generates high-level status updates and blocker alerts for standups.",
-      content: "Summarize active projects for client {{client_name}} during the week of {{week_date}}. Highlight completed milestones, active tasks, and flagged blockers.",
-      category: "Management",
-      tags: ["crm", "status", "weekly"],
-      updated_at: new Date().toISOString(),
-      user_id: "user-1",
-      client_id: "client-1",
-    },
-  ],
-  clients: [
-    {
-      id: "client-1",
-      name: "Mindweave Labs",
-      email: "contact@mindweave.io",
-      industry: "Software & AI",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "client-2",
-      name: "Apex Design Co",
-      email: "hello@apexdesign.com",
-      industry: "Visual & Motion Design",
-      created_at: new Date().toISOString(),
-    }
-  ],
-  projects: [
-    {
-      id: "proj-1",
-      name: "Mind Spark Studio Integration",
-      client_id: "client-1",
-      status: "work_in_progress",
-      impl_stage: "kickoff",
-      stage: "active",
-      type: "WEB",
-      value: 25000,
-      start_date: "2026-07-01",
-      target_date: "2026-08-15",
-      due_date: "2026-08-15",
-      notes: "Integrating Prompt Palace Pro with Mindweave canvas",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: "proj-2",
-      name: "Prompt Taxonomy Engine",
-      client_id: "client-2",
-      status: "work_in_progress",
-      impl_stage: "build",
-      stage: "active",
-      type: "Design",
-      value: 12000,
-      start_date: "2026-08-01",
-      target_date: "2026-09-01",
-      due_date: "2026-08-20",
-      notes: "Designing custom prompt categorizers and tags",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: "proj-3",
-      name: "AI Knowledge Graph Search",
-      client_id: "client-1",
-      status: "work_in_progress",
-      impl_stage: "qa",
-      stage: "active",
-      type: "AI & ML",
-      value: 38000,
-      start_date: "2026-06-15",
-      target_date: "2026-08-01",
-      due_date: "2026-07-30",
-      notes: "Indexing multi-tenant vector databases for real-time query retrieval",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: "proj-4",
-      name: "Omnichannel Automated Workflow",
-      client_id: "client-2",
-      status: "work_in_progress",
-      impl_stage: "launch",
-      stage: "active",
-      type: "Automation",
-      value: 18500,
-      start_date: "2026-07-10",
-      target_date: "2026-08-05",
-      due_date: "2026-08-05",
-      notes: "Webhook automation across Slack, HubSpot, and Google Workspace",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: "proj-rec-1",
-      name: "Monthly Architecture & Mind Map Review",
-      client_id: "client-1",
-      status: "active",
-      impl_stage: "kickoff",
-      stage: "active",
-      type: "WEB",
-      value: 8500,
-      repeat_interval: "monthly",
-      next_occurrence_date: "2026-08-01",
-      due_date: "2026-08-01",
-      notes: "Monthly architecture review and system health audit for Mindweave Labs",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: "proj-rec-2",
-      name: "Weekly Security & Key Vault Audit",
-      client_id: "client-2",
-      status: "active",
-      impl_stage: "build",
-      stage: "active",
-      type: "Security",
-      value: 3200,
-      repeat_interval: "weekly",
-      next_occurrence_date: "2026-08-05",
-      due_date: "2026-08-05",
-      notes: "Weekly access control check & credential encryption validation for Apex Design",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-  ],
-  credentials: [
-    {
-      id: "cred-1",
-      client_id: "client-1",
-      label: "Mindweave Production Portal",
-      system: "WordPress",
-      url: "https://mindweave.io/wp-admin",
-      username: "admin@mindweave.io",
-      notes: "Main CMS login for client portal updates and blog posts.",
-      last_rotated_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "cred-2",
-      client_id: "client-1",
-      label: "AWS Staging Vault",
-      system: "AWS IAM",
-      url: "https://console.aws.amazon.com",
-      username: "mindweave-dev-admin",
-      notes: "2FA active via Studio Authenticator app.",
-      last_rotated_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "cred-3",
-      client_id: "client-2",
-      label: "Apex Figma Workspace",
-      system: "Figma",
-      url: "https://figma.com/@apexdesign",
-      username: "design@apexdesign.com",
-      notes: "Enterprise tier workspace access token in notes.",
-      last_rotated_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    },
-  ],
-  credential_secrets: {
-    "cred-1": "Mw#88!vP$92026",
-    "cred-2": "aWs_Staging_K3y_2026!",
-    "cred-3": "FgMa_Design_Vault_99!",
-  },
-  wiki_spaces: [
-    {
-      id: "space-1",
-      name: "Studio Architecture",
-      slug: "studio-architecture",
-      description: "Core technical guides, process specs, and system blueprints.",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "space-2",
-      name: "Prompt Playbooks",
-      slug: "prompt-playbooks",
-      description: "Best practices and prompt engineering patterns.",
-      created_at: new Date().toISOString(),
-    },
-  ],
-  wiki_pages: [
-    {
-      id: "page-1",
-      space_id: "space-1",
-      space_slug: "studio-architecture",
-      slug: "system-overview",
-      title: "System Architecture & Process Flow",
-      body: "# Mind Spark Studio & Prompt Palace Pro\n\nWelcome to the unified canvas and prompt studio system.",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-  ],
-  team_members: [
-    {
-      id: "team-1",
-      user_id: "user-1",
-      name: "Studio Architect",
-      email: "architect@mindspark.studio",
-      role: "admin",
-      department: "Engineering",
-      created_at: new Date().toISOString(),
-    },
-  ],
-  team_directory: [
-    {
-      id: "dir-1",
-      name: "Studio Lead",
-      role: "Lead Systems Engineer",
-      email: "lead@mindspark.studio",
-      phone: "+1 (555) 019-2834",
-      notes: "Manages mind map canvas & prompt engine integrations",
-      created_at: new Date().toISOString(),
-    },
-  ],
-  project_credentials: [
-    {
-      id: "cred-1",
-      project_id: "proj-1",
-      service_name: "AI Studio Gateway",
-      username: "admin@mindspark.studio",
-      password_hash: "encrypted-vault-key",
-      created_at: new Date().toISOString(),
-    },
-  ],
-  recurring_projects: [
-    {
-      id: "rec-1",
-      title: "Monthly Mind Map Architecture Review",
-      client_id: "client-1",
-      repeat_interval: "monthly",
-      next_due_at: "2026-08-01",
-      created_at: new Date().toISOString(),
-    },
-  ],
+  prompts: [],
+  clients: [],
+  projects: [],
+  credentials: [],
+  credential_secrets: {},
+  wiki_spaces: [],
+  wiki_pages: [],
+  team_members: [],
+  team_directory: [],
+  project_credentials: [],
+  recurring_projects: [],
   contacts: [],
   client_notes: [],
   client_conversations: [],
   project_stages: [],
-  project_tasks: [
-    {
-      id: "task-101",
-      project_id: "proj-1",
-      title: "Kickoff call & technical architecture review",
-      description: "Review system bounds and confirm deployment environments",
-      status: "done",
-      assignee_id: "dir-1",
-      due_date: "2026-07-10",
-      position: 1,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-102",
-      project_id: "proj-1",
-      title: "Design mind map API request schemas",
-      description: "Specify JSON request/response formats for AI canvas sync",
-      status: "doing",
-      assignee_id: "dir-1",
-      due_date: "2026-07-28",
-      position: 2,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-103",
-      project_id: "proj-1",
-      title: "Set up staging sandbox environment",
-      description: "Provision staging environment with test credentials",
-      status: "todo",
-      assignee_id: null,
-      due_date: "2026-08-02",
-      position: 3,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-201",
-      project_id: "proj-2",
-      title: "Draft taxonomy classification hierarchy",
-      description: "Build category trees for engineering, product, and sales prompts",
-      status: "doing",
-      assignee_id: "dir-1",
-      due_date: "2026-07-29",
-      position: 1,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-202",
-      project_id: "proj-2",
-      title: "Fix tag collision on prompt clone",
-      description: "Ensure tags are deduplicated during prompt copying",
-      status: "blocked",
-      assignee_id: "dir-1",
-      due_date: "2026-07-24",
-      position: 2,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-203",
-      project_id: "proj-2",
-      title: "Build bulk tag editor component",
-      description: "Allow multi-selection and bulk tag applying in UI",
-      status: "todo",
-      assignee_id: null,
-      due_date: "2026-08-05",
-      position: 3,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-301",
-      project_id: "proj-3",
-      title: "Execute vector query recall benchmarking",
-      description: "Test cosine similarity search latency on 100k vectors",
-      status: "doing",
-      assignee_id: "dir-1",
-      due_date: "2026-07-27",
-      position: 1,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-302",
-      project_id: "proj-3",
-      title: "Set up automated index refresh cron job",
-      description: "Daily embedding recalculation for updated documents",
-      status: "todo",
-      assignee_id: "dir-1",
-      due_date: "2026-07-29",
-      position: 2,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-303",
-      project_id: "proj-3",
-      title: "Ingest sample documentation knowledge base",
-      description: "Populate test vector index with 500 tech articles",
-      status: "done",
-      assignee_id: "dir-1",
-      due_date: "2026-07-20",
-      position: 3,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-401",
-      project_id: "proj-4",
-      title: "Deploy production webhook listener cluster",
-      description: "Spin up serverless runners behind load balancer",
-      status: "doing",
-      assignee_id: "dir-1",
-      due_date: "2026-07-28",
-      position: 1,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-    {
-      id: "task-402",
-      project_id: "proj-4",
-      title: "Run security audit & penetration test",
-      description: "Verify webhook secret signatures and payload validation",
-      status: "done",
-      assignee_id: "dir-1",
-      due_date: "2026-07-22",
-      position: 2,
-      created_by: "user-1",
-      created_at: new Date().toISOString(),
-    },
-  ],
+  project_tasks: [],
   project_milestones: [],
   user_roles: [
     { user_id: "user-1", role: "admin" }
@@ -441,9 +29,134 @@ const INITIAL_MOCK_DB: Record<string, any[]> = {
 };
 
 let memoryMockCache: Record<string, any[]> | null = null;
+let isFirestoreInitialized = false;
+const FIRESTORE_STATE_PATH = "app_state/crm_db";
+
+const DEMO_IDS = new Set([
+  "prompt-1", "prompt-2", "prompt-3", "prompt-4", "prompt-5", "prompt-6",
+  "client-1", "client-2", "proj-1", "proj-2", "proj-3", "proj-4", "proj-5",
+  "proj-rec-1", "proj-rec-2", "cred-1", "cred-2", "cred-3", "space-1", "space-2",
+  "page-1", "team-1", "dir-1", "task-101", "task-102", "task-103", "task-201",
+  "task-202", "task-203", "task-301", "task-302", "task-303", "task-401", "task-402", "rec-1"
+]);
+
+const DEMO_NAMES = new Set([
+  "Mindweave Labs", "Apex Design Co", "Mind Spark Studio Integration",
+  "Prompt Taxonomy Engine", "AI Knowledge Graph Search", "Omnichannel Automated Workflow",
+  "Monthly Architecture & Mind Map Review", "Weekly Security & Key Vault Audit",
+  "Mind Map Concept Expansion", "Process Flow Spec Generator", "System Refactoring Assistant",
+  "Client Onboarding Discovery Brief", "AI Project Quote & Scope Estimator",
+  "Weekly CRM & Pipeline Summarizer", "Studio Architecture", "Prompt Playbooks",
+  "System Architecture & Process Flow", "Studio Architect", "Studio Lead"
+]);
+
+function purgeDemoData(db: Record<string, any>): boolean {
+  let changed = false;
+  for (const key of Object.keys(db)) {
+    if (Array.isArray(db[key])) {
+      const origLen = db[key].length;
+      db[key] = db[key].filter((item: any) => {
+        if (!item || typeof item !== "object") return true;
+        if (item.id && DEMO_IDS.has(item.id)) return false;
+        if (item.name && DEMO_NAMES.has(item.name)) return false;
+        if (item.title && DEMO_NAMES.has(item.title)) return false;
+        if (item.label && DEMO_NAMES.has(item.label)) return false;
+        if (item.client_id && DEMO_IDS.has(item.client_id)) return false;
+        if (item.project_id && DEMO_IDS.has(item.project_id)) return false;
+        return true;
+      });
+      if (db[key].length !== origLen) changed = true;
+    } else if (key === "credential_secrets" && typeof db[key] === "object" && db[key] !== null) {
+      for (const credId of ["cred-1", "cred-2", "cred-3"]) {
+        if (credId in db[key]) {
+          delete db[key][credId];
+          changed = true;
+        }
+      }
+    }
+  }
+  return changed;
+}
+
+let hasReceivedFirstSnapshot = false;
+let firstSnapshotResolver: (() => void) | null = null;
+const firstSnapshotPromise = new Promise<void>((resolve) => {
+  firstSnapshotResolver = resolve;
+});
+
+function notifyFirstSnapshotReceived() {
+  hasReceivedFirstSnapshot = true;
+  if (firstSnapshotResolver) {
+    firstSnapshotResolver();
+    firstSnapshotResolver = null;
+  }
+}
+
+function initFirestoreSync() {
+  if (isFirestoreInitialized || typeof window === "undefined") return;
+  isFirestoreInitialized = true;
+
+  try {
+    const docRef = doc(firestoreDb, "app_state", "crm_db");
+    onSnapshot(
+      docRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data && data.payload) {
+            try {
+              const parsed = JSON.parse(data.payload);
+              const changed = purgeDemoData(parsed);
+              memoryMockCache = parsed;
+              if (changed) {
+                saveMockStorage(parsed);
+              } else if (typeof localStorage !== "undefined") {
+                localStorage.setItem("mind_spark_studio_mock_db", data.payload);
+              }
+              notifyFirstSnapshotReceived();
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("supabase_storage_sync", { detail: { type: "firestore_sync", parsed } }));
+              }
+            } catch (e) {
+              console.error("Failed to parse Firestore state payload:", e);
+              notifyFirstSnapshotReceived();
+            }
+          } else {
+            notifyFirstSnapshotReceived();
+          }
+        } else {
+          // First boot on cloud project: Seed Firestore document with current state
+          const current = memoryMockCache || INITIAL_MOCK_DB;
+          purgeDemoData(current);
+          const payloadStr = JSON.stringify(current);
+          setDoc(docRef, {
+            payload: payloadStr,
+            updated_at: new Date().toISOString(),
+          }).catch((err) => {
+            console.warn("Firestore sync write fallback to local storage:", err?.message || err);
+          });
+          notifyFirstSnapshotReceived();
+        }
+      },
+      (error) => {
+        console.warn("Firestore sync notification:", error);
+        notifyFirstSnapshotReceived();
+      }
+    );
+  } catch (err) {
+    console.error("Error setting up Firestore sync listener:", err);
+    notifyFirstSnapshotReceived();
+  }
+}
 
 function getMockStorage(): Record<string, any[]> {
-  if (memoryMockCache) return memoryMockCache;
+  initFirestoreSync();
+  if (memoryMockCache) {
+    if (purgeDemoData(memoryMockCache)) {
+      saveMockStorage(memoryMockCache);
+    }
+    return memoryMockCache;
+  }
   if (typeof localStorage === "undefined") return INITIAL_MOCK_DB;
   const raw = localStorage.getItem("mind_spark_studio_mock_db");
   if (!raw) {
@@ -453,78 +166,17 @@ function getMockStorage(): Record<string, any[]> {
   }
   try {
     const parsed = JSON.parse(raw);
-    let updated = false;
+    let updated = purgeDemoData(parsed);
 
-    // Filter out deleted project proj-5 / Enterprise Single Sign-On (SSO)
-    if (Array.isArray(parsed.projects)) {
-      const origLen = parsed.projects.length;
-      parsed.projects = parsed.projects.filter(
-        (p: any) => p.id !== "proj-5" && p.name !== "Enterprise Single Sign-On (SSO)"
-      );
-      if (parsed.projects.length !== origLen) updated = true;
-    }
-
-    if (Array.isArray(parsed.project_tasks)) {
-      const origLen = parsed.project_tasks.length;
-      parsed.project_tasks = parsed.project_tasks.filter((t: any) => t.project_id !== "proj-5");
-      if (parsed.project_tasks.length !== origLen) updated = true;
-    }
-
-    // Ensure missing table arrays/objects are defined
+    // Ensure missing table keys that do not exist at all in parsed are initialized
     for (const key of Object.keys(INITIAL_MOCK_DB)) {
-      if (Array.isArray(INITIAL_MOCK_DB[key])) {
-        if (!parsed[key] || !Array.isArray(parsed[key])) {
+      if (parsed[key] === undefined) {
+        if (Array.isArray(INITIAL_MOCK_DB[key])) {
           parsed[key] = [...INITIAL_MOCK_DB[key]];
-          updated = true;
-        }
-      } else if (typeof INITIAL_MOCK_DB[key] === "object") {
-        if (!parsed[key] || typeof parsed[key] !== "object") {
+        } else if (typeof INITIAL_MOCK_DB[key] === "object" && INITIAL_MOCK_DB[key] !== null) {
           parsed[key] = { ...INITIAL_MOCK_DB[key] };
-          updated = true;
         }
-      }
-    }
-
-    // Seed credentials if empty
-    if (Array.isArray(parsed.credentials) && parsed.credentials.length === 0 && Array.isArray(INITIAL_MOCK_DB.credentials)) {
-      parsed.credentials = [...INITIAL_MOCK_DB.credentials];
-      parsed.credential_secrets = { ...(INITIAL_MOCK_DB.credential_secrets || {}) };
-      updated = true;
-    }
-
-    // Seed/merge prompts if empty or if initial prompts missing
-    if (Array.isArray(parsed.prompts)) {
-      if (parsed.prompts.length === 0) {
-        parsed.prompts = [...INITIAL_MOCK_DB.prompts];
         updated = true;
-      } else {
-        for (const initP of INITIAL_MOCK_DB.prompts) {
-          if (!parsed.prompts.some((p: any) => p.id === initP.id)) {
-            parsed.prompts.push(initP);
-            updated = true;
-          }
-        }
-      }
-    }
-
-    // Ensure impl_stage & repeat_interval on existing projects if missing from early versions
-    if (Array.isArray(parsed.projects)) {
-      for (const initProj of INITIAL_MOCK_DB.projects) {
-        const idx = parsed.projects.findIndex((p: any) => p.id === initProj.id);
-        if (idx >= 0) {
-          if (!parsed.projects[idx].impl_stage && initProj.impl_stage) {
-            parsed.projects[idx] = { ...parsed.projects[idx], impl_stage: initProj.impl_stage };
-            updated = true;
-          }
-          if (!parsed.projects[idx].repeat_interval && initProj.repeat_interval) {
-            parsed.projects[idx] = { ...parsed.projects[idx], repeat_interval: initProj.repeat_interval, next_occurrence_date: initProj.next_occurrence_date };
-            updated = true;
-          }
-        } else if (initProj.id.startsWith("proj-rec-")) {
-          // Add default recurring projects if missing
-          parsed.projects.push(initProj);
-          updated = true;
-        }
       }
     }
 
@@ -540,10 +192,31 @@ function getMockStorage(): Record<string, any[]> {
   }
 }
 
+let firestoreSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+
 function saveMockStorage(db: Record<string, any[]>) {
   memoryMockCache = db;
+  const payloadStr = JSON.stringify(db);
   if (typeof localStorage !== "undefined") {
-    localStorage.setItem("mind_spark_studio_mock_db", JSON.stringify(db));
+    localStorage.setItem("mind_spark_studio_mock_db", payloadStr);
+  }
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("supabase_storage_sync", { detail: { type: "local_mutation" } }));
+  }
+
+  // Persist asynchronously to Firestore with a debounce to prevent network congestion on rapid edits/drags
+  if (typeof window !== "undefined") {
+    if (firestoreSaveTimeout) clearTimeout(firestoreSaveTimeout);
+    firestoreSaveTimeout = setTimeout(() => {
+      const docRef = doc(firestoreDb, "app_state", "crm_db");
+      setDoc(docRef, {
+        payload: payloadStr,
+        updated_at: new Date().toISOString(),
+      }).catch((err) => {
+        console.warn("Firestore save fallback to local storage:", err?.message || err);
+      });
+    }, 300);
   }
 }
 
@@ -567,7 +240,14 @@ function createMockQuery(tableName: string) {
       sortFn = (a: any, b: any) => {
         const valA = a[field] ?? "";
         const valB = b[field] ?? "";
-        const res = valA > valB ? 1 : valA < valB ? -1 : 0;
+        const res =
+          typeof valA === "string" && typeof valB === "string"
+            ? valA.localeCompare(valB, undefined, { numeric: true, sensitivity: "base" })
+            : valA > valB
+            ? 1
+            : valA < valB
+            ? -1
+            : 0;
         return ascending ? res : -res;
       };
       return builder;
@@ -674,8 +354,15 @@ function createMockQuery(tableName: string) {
       pendingMutation = { type: "delete" };
       return builder;
     },
-    then: (resolve: Function, reject: Function) => {
+    then: async (resolve: Function, reject: Function) => {
       try {
+        initFirestoreSync();
+        if (!hasReceivedFirstSnapshot && typeof window !== "undefined") {
+          await Promise.race([
+            firstSnapshotPromise,
+            new Promise((r) => setTimeout(r, 350)),
+          ]);
+        }
         const db = getMockStorage();
         const list = db[tableName] || [];
 
@@ -825,11 +512,13 @@ function createSupabaseClient() {
         const db = getMockStorage();
         db.credential_secrets = db.credential_secrets || {};
         if (args?._id) {
-          db.credential_secrets[args._id] = args._plain ?? "";
+          const secretValue = args._plain ?? "";
+          db.credential_secrets[args._id] = secretValue;
           if (Array.isArray(db.credentials)) {
             const idx = db.credentials.findIndex((c: any) => c.id === args._id);
             if (idx >= 0) {
               db.credentials[idx].last_rotated_at = new Date().toISOString();
+              db.credentials[idx]._secret_plain = secretValue;
             }
           }
           saveMockStorage(db);
@@ -848,6 +537,12 @@ function createSupabaseClient() {
         if (credId) {
           const creds = db.credentials || [];
           const found = creds.find((c: any) => c.id === credId);
+          if (found && typeof found._secret_plain === "string" && found._secret_plain.trim() !== "") {
+            secrets[credId] = found._secret_plain;
+            db.credential_secrets = secrets;
+            saveMockStorage(db);
+            return { data: found._secret_plain, error: null };
+          }
           const cleanLabel = found?.label ? found.label.replace(/[^a-zA-Z0-9]/g, "") : "Vault";
           const fallbackSecret = `P@ss_${cleanLabel || "Vault"}_2026!`;
           secrets[credId] = fallbackSecret;
